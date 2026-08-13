@@ -1,76 +1,82 @@
 # Live Palette
 
-A centralized, named color palette for Godot 4 — pick palette colors anywhere in the
-Inspector, and when you change a palette entry, **every place it was used updates**:
-open scenes instantly, other scenes when opened, and the running game at startup.
+A named color palette for Godot 4. Pick palette colors anywhere in the Inspector, and
+when you change one later, everything that used it follows. Open scenes update as you
+edit, scenes you open afterwards correct themselves, and the running game fixes itself
+at startup.
 
-<!-- screenshot: the Palette dock next to the Inspector -->
-<!-- screenshot: the Palette row under a Color property, with the swatch-grid popup open -->
+![The Palette dock, tabbed next to the Inspector](https://raw.githubusercontent.com/auxterlibre/live-palette/main/addons/live_palette/screenshot_01.png)
+
+![A StyleBox bg_color linked to a palette entry, with the swatch grid open](https://raw.githubusercontent.com/auxterlibre/live-palette/main/addons/live_palette/screenshot_02.png)
 
 ## Features
 
-- **Palette dock** — add, rename, recolor, delete and drag-to-reorder named colors.
-  Every operation is undoable.
-- **Inspector integration** — every `Color` property on **nodes and resources**
-  (theme overrides, StyleBoxes, Theme items, ShaderMaterial `source_color` uniforms)
-  gets a *Palette* row: pick an entry from a swatch grid to set the color **and link it**.
-  The built-in color picker stays available.
-- **Live propagation** — links are stored per use (in object metadata, by stable id, so
-  renaming palette entries never breaks them). Editing the palette re-applies everywhere;
-  a small runtime autoload re-applies at game start, so stale baked colors can never ship.
-- **Generated constants** — `res://live_palette/palette_const.gd` is (re)generated
-  automatically as `class_name LivePalette`:
+- A Palette dock for adding, renaming, recoloring, deleting and drag-reordering named
+  colors. All of it is undoable.
+- Every `Color` property in the Inspector gets a Palette row, on nodes and on resources
+  alike (theme overrides, StyleBoxes, Theme items, shader `source_color` uniforms).
+  Pick from the swatch grid to set the color and link the property to that entry. The
+  built-in color picker stays where it was.
+- Each link stores a stable id rather than a name, so renaming an entry doesn't break it.
+- A small autoload re-applies the palette when the game starts, so a scene saved with
+  old colors still runs with the right ones.
+- The addon writes a constants file to `res://live_palette/palette_const.gd` and keeps
+  it current:
 
   ```gdscript
-  $Sprite2D.modulate = LivePalette.SKY_BLUE          # autocompleted, compile-checked
-  var c := LivePalette.color("Sky Blue")             # static lookup by display name
+  $Sprite2D.modulate = LivePalette.SKY_BLUE      # autocompleted, checked at compile time
+  var c := LivePalette.color("Sky Blue")         # lookup when the name is in a variable
   if LivePalette.has_color("Sky Blue"): ...
   ```
 
-- **GIMP `.gpl` import/export** — pull palettes from Lospec, Aseprite, Krita or GIMP
-  straight into the dock (one undoable action), or export yours.
-- **Find Uses** — each palette row has a search button that lists every saved
-  scene/resource linking that color; double-click a result to open it.
+- You can import and export GIMP `.gpl` files, so a palette from Lospec, Aseprite or
+  Krita lands in the dock in one step. The import is a single undoable action.
+- Each row has a search button that lists every saved scene or resource using that
+  color. Double-click a result to open it.
 
 ## Install
 
-1. Copy `addons/live_palette/` into your project (or install via the Asset Library).
-2. Enable **Live Palette** in *Project Settings > Plugins*.
+1. Copy `addons/live_palette/` into your project, or install it from the Asset Library.
+2. Enable Live Palette in Project Settings > Plugins.
 
-Enabling registers the `LivePaletteRuntime` autoload and creates `res://live_palette/`
-(the palette resource + generated constants). Requires **Godot 4.4+**.
+Enabling it registers the `LivePaletteRuntime` autoload and creates
+`res://live_palette/` for the palette resource and the generated constants. Needs Godot
+4.4 or newer.
 
 ## Quick start
 
-1. Open the **Palette** dock (tabbed next to the Inspector) and add a few colors.
-2. Select any node, find any Color property, and use its **Palette** row to link a color.
-3. Change that color in the dock — everything linked follows, in-editor and in-game.
-4. In code, use `LivePalette.MY_COLOR` (constants) or `LivePalette.color("My Color")`.
+1. Open the Palette dock (it tabs next to the Inspector) and add a few colors.
+2. Select a node, find any Color property, and link a color through its Palette row.
+3. Change that color in the dock. Everything linked follows, in the editor and in game.
+4. In code, use `LivePalette.MY_COLOR`, or `LivePalette.color("My Color")` by name.
 
 ## How it works
 
-Picking a palette color stores `{property: entry_id}` in the object's
-`_live_palette_bindings` metadata (hidden, serialized with the scene/resource). The
-editor plugin re-applies bindings to open scenes when the palette changes and to scenes
-as they open; the `LivePaletteRuntime` autoload re-applies at startup and on every
-`node_added`, then stays out of the way. Ids are stable, so entry renames are free.
+Picking a palette color writes `{property: entry_id}` into the object's
+`_live_palette_bindings` metadata. That metadata is hidden in the Inspector and saved
+with the scene or resource. In the editor, the plugin re-applies bindings to open scenes
+whenever the palette changes, and to other scenes as you open them. At runtime the
+`LivePaletteRuntime` autoload does one pass at startup, then watches `node_added`. Ids
+never change, so renames are free.
 
-## Notes & limitations
+## Notes and limitations
 
-- `LivePalette.*` constants are a **snapshot** (regenerated on every palette save). If
-  you mutate the palette at runtime, read live values via `LivePaletteRuntime.color()`.
-- Colors inside `Array`/`Dictionary` properties of resources are not walked (direct
-  resource properties are).
-- *Find Uses* scans saved **text** formats (`.tscn`, `.tres`, `.escn`, `.theme`);
-  binary `.scn`/`.res` and unsaved changes are not seen.
-- `.gpl` is an RGB format — alpha is flattened on export (RGBA import via Krita's
-  `Channels: RGBA` variant is supported).
-- Exports: the palette lives at `res://live_palette/palette.tres`; the default
-  "export all resources" setting includes it automatically.
-- The names `LivePalette`, `LivePaletteRuntime` and `LivePaletteData` must stay free in
-  your project (Godot forbids an autoload sharing a name with a global class). The
-  plugin detects collisions and reports them clearly instead of failing cryptically.
+- The `LivePalette.*` constants are a snapshot, rewritten on every palette save. If you
+  change the palette while the game runs, read live values with
+  `LivePaletteRuntime.color()` instead.
+- Colors inside `Array` or `Dictionary` properties of resources are not walked. Direct
+  resource properties are.
+- Find Uses reads saved text files (`.tscn`, `.tres`, `.escn`, `.theme`). It can't see
+  binary `.scn`/`.res` files, or changes you haven't saved yet.
+- `.gpl` is an RGB format, so export flattens alpha. The importer also reads Krita's
+  RGBA variant.
+- The palette lives at `res://live_palette/palette.tres` and is picked up by the default
+  "export all resources" setting.
+- The names `LivePalette`, `LivePaletteRuntime` and `LivePaletteData` need to stay free
+  in your project, because Godot refuses an autoload that shares its name with a global
+  class. The plugin checks for this and tells you which script clashes, rather than
+  failing with Godot's own error dialog.
 
 ## License
 
-[MIT](LICENSE) © Thiago Rocha
+MIT, see [LICENSE](LICENSE). Copyright Thiago Rocha.

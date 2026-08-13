@@ -5,6 +5,7 @@ const DATA_DIR := "res://live_palette"
 const PALETTE_PATH := DATA_DIR + "/palette.tres"
 const CONST_SCRIPT_PATH := DATA_DIR + "/palette_const.gd"
 const CONST_CLASS := "LivePalette"
+const RUNTIME_PATH := "res://addons/live_palette/palette_runtime.gd"
 const AUTOLOAD_NAME := "LivePaletteRuntime"
 
 var palette: LivePaletteData
@@ -14,6 +15,7 @@ var _save_timer: Timer
 
 
 func _enter_tree() -> void:
+	_migrate_legacy_autoload()
 	if not ResourceLoader.exists(PALETTE_PATH):
 		_ensure_data_dir()
 		ResourceSaver.save(LivePaletteData.new(), PALETTE_PATH)
@@ -50,7 +52,32 @@ func _enable_plugin() -> void:
 		if c["class"] == AUTOLOAD_NAME:
 			push_error("LivePalette: can't register the '%s' autoload — that name is already a class_name in %s. Rename that class, or register the autoload yourself under a different name." % [AUTOLOAD_NAME, c["path"]])
 			return
-	add_autoload_singleton(AUTOLOAD_NAME, "res://addons/live_palette/palette_runtime.gd")
+	add_autoload_singleton(AUTOLOAD_NAME, RUNTIME_PATH)
+
+
+## Versions before 1.0 registered the runtime autoload as "LivePalette", the name the
+## generated constants class now uses. Left in place, Godot refuses to parse that class
+## ("hides an autoload singleton") and every script referencing it fails with it.
+func _migrate_legacy_autoload() -> void:
+	var key := "autoload/" + CONST_CLASS
+	if not ProjectSettings.has_setting(key):
+		return
+	if not _resolve_autoload_path(str(ProjectSettings.get_setting(key))).ends_with("palette_runtime.gd"):
+		return  # somebody else's autoload: leave it alone, _write_const_script reports the clash
+	remove_autoload_singleton(CONST_CLASS)
+	if not ProjectSettings.has_setting("autoload/" + AUTOLOAD_NAME):
+		add_autoload_singleton(AUTOLOAD_NAME, RUNTIME_PATH)
+	ProjectSettings.save()
+	push_warning("LivePalette: renamed the leftover '%s' autoload from an older version to '%s'. Restart the editor if scripts still report a collision." % [CONST_CLASS, AUTOLOAD_NAME])
+
+
+## Autoload values are "*res://path.gd" or "*uid://abc"; return the script path either way.
+func _resolve_autoload_path(p_value: String) -> String:
+	var v := p_value.trim_prefix("*")
+	if v.begins_with("uid://"):
+		var id := ResourceUID.text_to_id(v)
+		return ResourceUID.get_id_path(id) if ResourceUID.has_id(id) else ""
+	return v
 
 
 func _disable_plugin() -> void:
@@ -96,6 +123,9 @@ func _ensure_data_dir() -> void:
 
 
 func _write_const_script() -> void:
+	if ProjectSettings.has_setting("autoload/" + CONST_CLASS):
+		push_error("LivePalette: an autoload named '%s' already exists, so the generated class can't use that name (Godot: \"hides an autoload singleton\"). Rename that autoload in Project Settings > Autoload, then delete %s to regenerate it." % [CONST_CLASS, CONST_SCRIPT_PATH])
+		return
 	for c in ProjectSettings.get_global_class_list():
 		if c["class"] == CONST_CLASS and str(c["path"]) != CONST_SCRIPT_PATH:
 			push_error("LivePalette: can't generate %s — the class name '%s' is already used by %s." % [CONST_SCRIPT_PATH, CONST_CLASS, c["path"]])

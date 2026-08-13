@@ -97,8 +97,11 @@ func _row_ids() -> Array:
 
 func _rebuild() -> void:
 	for c in _rows.get_children():
+		# remove_child takes the row out of _row_ids() immediately; queue_free defers the
+		# delete, because a rebuild often runs from a signal emitted by a button inside it
+		# (deleting a color) and freeing that button mid-emission is an engine error.
 		_rows.remove_child(c)
-		c.free()
+		c.queue_free()
 	for e in palette.entries:
 		_rows.add_child(_make_row(e))
 	_empty_hint.visible = palette.entries.is_empty()
