@@ -1,0 +1,128 @@
+@tool
+extends EditorPlugin
+
+const DATA_DIR := "res://live_palette"
+const PALETTE_PATH := DATA_DIR + "/palette.tres"
+const CONST_SCRIPT_PATH := DATA_DIR + "/palette_const.gd"
+const CONST_CLASS := "LivePalette"
+const AUTOLOAD_NAME := "LivePaletteRuntime"
+
+var palette: LivePaletteData
+var dock
+var inspector
+var _save_timer: Timer
+
+
+func _enter_tree() -> void:
+	if not ResourceLoader.exists(PALETTE_PATH):
+		_ensure_data_dir()
+		ResourceSaver.save(LivePaletteData.new(), PALETTE_PATH)
+	palette = load(PALETTE_PATH) as LivePaletteData
+	palette.changed.connect(_on_palette_changed)
+	_save_timer = Timer.new()
+	_save_timer.one_shot = true
+	_save_timer.wait_time = 0.5
+	_save_timer.timeout.connect(_flush_save)
+	add_child(_save_timer)
+	dock = load("res://addons/live_palette/dock.gd").new()
+	dock.name = "Palette"  # dock tab title
+	dock.setup(palette, get_undo_redo())
+	dock.generate_requested.connect(_write_const_script)
+	add_control_to_dock(DOCK_SLOT_RIGHT_UL, dock)
+	inspector = load("res://addons/live_palette/inspector_plugin.gd").new()
+	inspector.setup(palette, get_undo_redo())
+	add_inspector_plugin(inspector)
+	scene_changed.connect(_on_scene_changed)
+	_apply_all.call_deferred()
+	_write_const_script.call_deferred()
+
+
+func _exit_tree() -> void:
+	remove_inspector_plugin(inspector)
+	remove_control_from_docks(dock)
+	dock.free()
+	if _save_timer and not _save_timer.is_stopped():
+		_flush_save()
+
+
+func _enable_plugin() -> void:
+	for c in ProjectSettings.get_global_class_list():
+		if c["class"] == AUTOLOAD_NAME:
+			push_error("LivePalette: can't register the '%s' autoload — that name is already a class_name in %s. Rename that class, or register the autoload yourself under a different name." % [AUTOLOAD_NAME, c["path"]])
+			return
+	add_autoload_singleton(AUTOLOAD_NAME, "res://addons/live_palette/palette_runtime.gd")
+
+
+func _disable_plugin() -> void:
+	remove_autoload_singleton(AUTOLOAD_NAME)
+
+
+func _on_palette_changed() -> void:
+	_apply_all()
+	_save_timer.start()
+
+
+func _on_scene_changed(p_root: Node) -> void:
+	if p_root and palette and palette.apply_to_tree(p_root) > 0:
+		EditorInterface.mark_scene_as_unsaved()
+
+
+func _apply_all() -> void:
+	var current := EditorInterface.get_edited_scene_root()
+	for root in _open_roots():
+		if palette.apply_to_tree(root) > 0 and root == current:
+			EditorInterface.mark_scene_as_unsaved()
+
+
+func _open_roots() -> Array:
+	if EditorInterface.has_method("get_open_scene_roots"):  # 4.7+; absent in 4.4
+		return EditorInterface.call("get_open_scene_roots")
+	var r := EditorInterface.get_edited_scene_root()
+	return [r] if r else []
+
+
+func _flush_save() -> void:
+	_save_timer.stop()
+	ResourceSaver.save(palette)
+	_write_const_script()
+	var obj := EditorInterface.get_inspector().get_edited_object()
+	if obj:
+		obj.notify_property_list_changed()
+
+
+func _ensure_data_dir() -> void:
+	if not DirAccess.dir_exists_absolute(DATA_DIR):
+		DirAccess.make_dir_recursive_absolute(DATA_DIR)
+
+
+func _write_const_script() -> void:
+	for c in ProjectSettings.get_global_class_list():
+		if c["class"] == CONST_CLASS and str(c["path"]) != CONST_SCRIPT_PATH:
+			push_error("LivePalette: can't generate %s — the class name '%s' is already used by %s." % [CONST_SCRIPT_PATH, CONST_CLASS, c["path"]])
+			return
+	_ensure_data_dir()
+	var text: String = palette.build_const_script(CONST_CLASS, PALETTE_PATH)
+	var existed := FileAccess.file_exists(CONST_SCRIPT_PATH)
+	if existed and FileAccess.get_file_as_string(CONST_SCRIPT_PATH) == text:
+		return
+	var f := FileAccess.open(CONST_SCRIPT_PATH, FileAccess.WRITE)
+	if f == null:
+		push_error("LivePalette: can't write %s (%s)" % [CONST_SCRIPT_PATH, error_string(FileAccess.get_open_error())])
+		return
+	f.store_string(text)
+	f.close()
+	var fs := EditorInterface.get_resource_filesystem()
+	fs.update_file(CONST_SCRIPT_PATH)
+	if not existed:
+		fs.scan()
+
+
+func _save_external_data() -> void:
+	if palette:
+		_flush_save()
+
+
+func _build() -> bool:
+	if palette:
+		_flush_save()
+	return true
