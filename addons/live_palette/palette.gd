@@ -3,9 +3,17 @@ class_name LivePaletteData
 extends Resource
 
 const META := &"_live_palette_bindings"
+const DEFAULT_VARIANT := "Default"
 
-## [{id: String, name: String, color: Color}]
+## [{id: String, name: String, colors: {variant_name: Color}}]. Pre-1.1 entries
+## carry a single "color" instead and are read through the same accessors.
 @export var entries: Array[Dictionary] = []
+
+## Ordered; the first is the fallback for any entry a variant has no color for.
+@export var variants: PackedStringArray = PackedStringArray([DEFAULT_VARIANT])
+
+## The variant currently applied, in the editor and at startup.
+@export var active_variant: String = DEFAULT_VARIANT
 
 
 func find_index(p_id: String) -> int:
@@ -15,17 +23,19 @@ func find_index(p_id: String) -> int:
 	return -1
 
 
-func get_color_by_id(p_id: String) -> Color:
+## Empty p_variant means the active one. Falls back to the first variant when this
+## one has no color for the entry, so a half-filled variant still renders.
+func get_color_by_id(p_id: String, p_variant: String = "") -> Color:
 	var i := find_index(p_id)
 	if i < 0:
 		return Color.WHITE
-	return entries[i]["color"]
+	return color_of(entries[i], p_variant)
 
 
-func get_color_by_name(p_name: StringName) -> Color:
+func get_color_by_name(p_name: StringName, p_variant: String = "") -> Color:
 	for e in entries:
 		if e["name"] == String(p_name):
-			return e["color"]
+			return color_of(e, p_variant)
 	push_warning("LivePalette: no color named '%s'" % p_name)
 	return Color.WHITE
 
@@ -37,6 +47,92 @@ func has_color_name(p_name: StringName) -> bool:
 	return false
 
 
+## Reads one entry, tolerating both the 1.1 "colors" map and the pre-1.1 "color".
+func color_of(p_entry: Dictionary, p_variant: String = "") -> Color:
+	if not p_entry.has("colors"):
+		return p_entry.get("color", Color.WHITE)
+	var colors: Dictionary = p_entry["colors"]
+	var wanted: String = p_variant if p_variant != "" else active_variant
+	if colors.has(wanted):
+		return colors[wanted]
+	var fallback: String = variants[0] if not variants.is_empty() else DEFAULT_VARIANT
+	if colors.has(fallback):
+		return colors[fallback]
+	return colors.values()[0] if not colors.is_empty() else Color.WHITE
+
+
+func base_variant() -> String:
+	return variants[0] if not variants.is_empty() else DEFAULT_VARIANT
+
+
+# -- variants --
+
+func add_variant(p_name: String, p_copy_from: String = "") -> void:
+	if p_name.is_empty() or p_name in variants:
+		return
+	variants.append(p_name)
+	# A new variant starts as a copy, so it is a recolor of a working set rather
+	# than a screen full of white.
+	var source: String = p_copy_from if p_copy_from != "" else active_variant
+	for e in entries:
+		if e.has("colors"):
+			e["colors"][p_name] = color_of(e, source)
+	emit_changed()
+
+
+func remove_variant(p_name: String) -> void:
+	if variants.size() <= 1 or not p_name in variants:
+		return  # never leave the palette with no variant at all
+	variants.remove_at(variants.find(p_name))
+	for e in entries:
+		if e.has("colors"):
+			e["colors"].erase(p_name)
+	if active_variant == p_name:
+		active_variant = base_variant()
+	emit_changed()
+
+
+func rename_variant(p_from: String, p_to: String) -> void:
+	if p_to.is_empty() or p_to in variants or not p_from in variants:
+		return
+	variants[variants.find(p_from)] = p_to
+	for e in entries:
+		if e.has("colors") and e["colors"].has(p_from):
+			e["colors"][p_to] = e["colors"][p_from]
+			e["colors"].erase(p_from)
+	if active_variant == p_from:
+		active_variant = p_to
+	emit_changed()
+
+
+func set_active_variant(p_name: String) -> void:
+	if p_name == active_variant or not p_name in variants:
+		return
+	active_variant = p_name
+	emit_changed()  # the editor and the autoload both re-apply from here
+
+
+## Rewrites pre-1.1 entries in place. Returns true when anything changed, so the
+## caller can save. Read access works without it; this just makes it permanent.
+func migrate() -> bool:
+	var changed := false
+	if variants.is_empty():
+		variants = PackedStringArray([DEFAULT_VARIANT])
+		changed = true
+	if not active_variant in variants:
+		active_variant = base_variant()
+		changed = true
+	for e in entries:
+		if e.has("colors"):
+			continue
+		e["colors"] = {base_variant(): e.get("color", Color.WHITE)}
+		e.erase("color")
+		changed = true
+	if changed:
+		emit_changed()
+	return changed
+
+
 func new_id() -> String:
 	var id := generate_scene_unique_id()
 	while find_index(id) >= 0:
@@ -46,8 +142,13 @@ func new_id() -> String:
 
 # -- mutators: the sole write path; each emits changed --
 
+## A new entry gets p_color in every variant: an entry that exists in one variant
+## and not another is the one state the fallback cannot paper over sensibly.
 func add_entry(p_id: String, p_name: String, p_color: Color, p_index: int = -1) -> void:
-	var e := {"id": p_id, "name": p_name, "color": p_color}
+	var colors := {}
+	for variant in variants:
+		colors[variant] = p_color
+	var e := {"id": p_id, "name": p_name, "colors": colors}
 	if p_index < 0 or p_index >= entries.size():
 		entries.append(e)
 	else:
@@ -80,11 +181,17 @@ func move_entry(p_id: String, p_to_index: int) -> void:
 	emit_changed()
 
 
-func set_color(p_id: String, p_color: Color) -> void:
+## Empty p_variant writes the active one, so the dock edits what it is showing.
+func set_color(p_id: String, p_color: Color, p_variant: String = "") -> void:
 	var i := find_index(p_id)
-	if i >= 0:
-		entries[i]["color"] = p_color
-		emit_changed()
+	if i < 0:
+		return
+	var variant: String = p_variant if p_variant != "" else active_variant
+	if not entries[i].has("colors"):
+		entries[i]["colors"] = {base_variant(): entries[i].get("color", Color.WHITE)}
+		entries[i].erase("color")
+	entries[i]["colors"][variant] = p_color
+	emit_changed()
 
 
 # -- constants script generation (text only; the plugin writes the file) --
@@ -104,17 +211,25 @@ static func const_identifier(p_name: String) -> String:
 	return out
 
 
-## %s slots: source path, class name, consts, class name, lookup pairs, class name.
-const CONST_TEMPLATE := """# Generated by the Live Palette addon from %s.
+## Named slots, not positional: the template repeats the class name three times and
+## a miscount silently shifts every substitution.
+const CONST_TEMPLATE := """# Generated by the Live Palette addon from {source}.
 # Do not edit — it is rewritten whenever the palette changes.
-class_name %s
+# The constants are the "{base}" variant; switching variants at runtime goes through
+# the LivePaletteRuntime autoload, which re-applies bound properties for you.
+class_name {class}
 
-%s
+{consts}
 
 ## Palette name -> color, for lookups by a name held in a variable.
-## Prefer the constants above: %s.MY_COLOR is checked at compile time.
+## Prefer the constants above: {class}.MY_COLOR is checked at compile time.
 const BY_NAME := {
-%s
+{pairs}
+}
+
+## Variant name -> {palette name -> color}, for reading a variant you are not on.
+const VARIANTS := {
+{variants}
 }
 
 
@@ -122,35 +237,63 @@ static func color(p_name: StringName) -> Color:
 	var key := str(p_name)
 	if BY_NAME.has(key):
 		return BY_NAME[key]
-	push_warning("%s: no color named '%%s'" %% p_name)
+	push_warning("{class}: no color named '%s'" % p_name)
 	return Color.WHITE
 
 
 static func has_color(p_name: StringName) -> bool:
 	return BY_NAME.has(str(p_name))
+
+
+## A color from a specific variant, falling back to the generated base variant.
+static func color_in(p_variant: StringName, p_name: StringName) -> Color:
+	var table: Dictionary = VARIANTS.get(str(p_variant), {})
+	if table.has(str(p_name)):
+		return table[str(p_name)]
+	return color(p_name)
+
+
+static func variant_names() -> PackedStringArray:
+	return PackedStringArray(VARIANTS.keys())
 """
 
 
 ## GDScript source exposing every entry as a Color constant, for autocompleted access.
+## Constants come from the base variant so they never move when the active variant
+## changes; every variant is also emitted in the VARIANTS table.
 func build_const_script(p_class_name: String, p_source_path: String) -> String:
 	var consts := PackedStringArray()
 	var pairs := PackedStringArray()
 	var used := {}
+	var base := base_variant()
 	for e in entries:
 		var ident := const_identifier(str(e["name"]))
 		if ident.is_empty():
 			ident = "C_" + str(e["id"]).to_upper()
-		var base := ident
+		var stem := ident
 		var n := 2
 		while used.has(ident):  # two names can sanitize to the same identifier
-			ident = "%s_%d" % [base, n]
+			ident = "%s_%d" % [stem, n]
 			n += 1
 		used[ident] = true
-		consts.append("const %s := %s" % [ident, var_to_str(e["color"])])
+		consts.append("const %s := %s" % [ident, var_to_str(color_of(e, base))])
 		pairs.append("\t%s: %s," % [var_to_str(str(e["name"])), ident])
-	return CONST_TEMPLATE % [
-		p_source_path, p_class_name, "\n".join(consts), p_class_name, "\n".join(pairs), p_class_name,
-	]
+
+	var variant_rows := PackedStringArray()
+	for variant in variants:
+		var cells := PackedStringArray()
+		for e in entries:
+			cells.append("\t\t%s: %s," % [var_to_str(str(e["name"])), var_to_str(color_of(e, variant))])
+		variant_rows.append("\t%s: {\n%s\n\t}," % [var_to_str(variant), "\n".join(cells)])
+
+	return CONST_TEMPLATE.format({
+		"source": p_source_path,
+		"base": base,
+		"class": p_class_name,
+		"consts": "\n".join(consts),
+		"pairs": "\n".join(pairs),
+		"variants": "\n".join(variant_rows),
+	})
 
 
 # -- GIMP .gpl import/export (the palette format Lospec, Aseprite and Krita speak) --
@@ -188,9 +331,10 @@ static func parse_gpl(p_text: String) -> Array[Dictionary]:
 
 ## The format is RGB: alpha is flattened on export.
 func to_gpl(p_palette_name: String) -> String:
-	var lines := PackedStringArray(["GIMP Palette", "Name: %s" % p_palette_name, "Columns: 8", "#"])
+	var lines := PackedStringArray(["GIMP Palette",
+			"Name: %s (%s)" % [p_palette_name, active_variant], "Columns: 8", "#"])
 	for e in entries:
-		var c: Color = e["color"]
+		var c: Color = color_of(e)  # the active variant: what the dock is showing
 		lines.append("%d %d %d\t%s" % [c.r8, c.g8, c.b8, e["name"]])
 	return "\n".join(lines) + "\n"
 
@@ -239,7 +383,7 @@ func apply_to_object(p_obj: Object, p_visited: Dictionary) -> int:
 			var i := find_index(str(bindings[prop]))
 			if i < 0:
 				continue
-			var c: Color = entries[i]["color"]
+			var c: Color = color_of(entries[i])  # whichever variant is active
 			var cur: Variant = p_obj.get(prop)
 			if cur is Color and not cur.is_equal_approx(c):
 				p_obj.set(prop, c)

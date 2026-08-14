@@ -64,9 +64,10 @@ class PaletteProp:
 			var id := str(e["id"])
 			var cell := Button.new()
 			cell.custom_minimum_size = Vector2(side, side)
-			cell.tooltip_text = "%s\n%s" % [e["name"], LivePaletteData.hex(e["color"])]  # name + hex on hover
-			cell.add_theme_stylebox_override(&"normal", _cell_style(e["color"], id == cur))
-			var hi := _cell_style(e["color"], true)
+			var swatch_color: Color = _palette.color_of(e)  # the active variant
+			cell.tooltip_text = "%s\n%s" % [e["name"], LivePaletteData.hex(swatch_color)]  # name + hex on hover
+			cell.add_theme_stylebox_override(&"normal", _cell_style(swatch_color, id == cur))
+			var hi := _cell_style(swatch_color, true)
 			cell.add_theme_stylebox_override(&"hover", hi)
 			cell.add_theme_stylebox_override(&"pressed", hi)
 			cell.add_theme_stylebox_override(&"focus", hi)
@@ -132,7 +133,7 @@ class PaletteProp:
 			_btn.icon = null
 		else:
 			_btn.text = str(_palette.entries[i]["name"])
-			_btn.icon = _swatch(_palette.entries[i]["color"])
+			_btn.icon = _swatch(_palette.color_of(_palette.entries[i]))
 
 	func _set_read_only(p_read_only: bool) -> void:
 		_btn.disabled = p_read_only

@@ -29,6 +29,16 @@ at startup.
   if LivePalette.has_color("Sky Blue"): ...
   ```
 
+- Variants: one set of named colors, several palettes of values. Add a Dark variant
+  beside your Default, switch with the dropdown at the top of the dock, and the editor
+  retints as you look at it. At runtime one call does the same to a live game:
+
+  ```gdscript
+  LivePaletteRuntime.set_variant("Dark")     # every bound property follows
+  var ink := LivePalette.color_in("Dark", "Ink")
+  ```
+
+  Links are stored by id, so adding variants changes nothing in your saved scenes.
 - You can import and export GIMP `.gpl` files, so a palette from Lospec, Aseprite or
   Krita lands in the dock in one step. The import is a single undoable action.
 - Each row has a search button that lists every saved scene or resource using that
@@ -63,7 +73,9 @@ never change, so renames are free.
 
 - The `LivePalette.*` constants are a snapshot, rewritten on every palette save. If you
   change the palette while the game runs, read live values with
-  `LivePaletteRuntime.color()` instead.
+  `LivePaletteRuntime.color()` instead. The constants come from the first variant, so
+  they stay put when you switch the active one; `LivePalette.color_in()` reads the rest.
+- `.gpl` export writes the variant you are looking at, and import fills it.
 - Colors inside `Array` or `Dictionary` properties of resources are not walked. Direct
   resource properties are.
 - Find Uses reads saved text files (`.tscn`, `.tres`, `.escn`, `.theme`). It can't see

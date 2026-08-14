@@ -15,6 +15,10 @@ var _drop_row := -1  # row index the reorder indicator sits above; -1 = hidden
 var _empty_hint: Label
 var _uses_dlg: AcceptDialog
 var _uses_list: ItemList
+var _variant_picker: OptionButton
+var _variant_dialog: AcceptDialog
+var _variant_field: LineEdit
+var _variant_action := ""  # "add" or "rename", for the shared name dialog
 
 
 func setup(p_palette: LivePaletteData, p_undo: EditorUndoRedoManager) -> void:
@@ -24,6 +28,30 @@ func setup(p_palette: LivePaletteData, p_undo: EditorUndoRedoManager) -> void:
 
 
 func _ready() -> void:
+	# Variant bar: which colour set the dock edits and the editor previews.
+	var bar := HBoxContainer.new()
+	_variant_picker = OptionButton.new()
+	_variant_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_variant_picker.tooltip_text = "The variant shown here and applied to open scenes.\nAt runtime: LivePaletteRuntime.set_variant(\"...\")."
+	_variant_picker.item_selected.connect(_on_variant_selected)
+	bar.add_child(_variant_picker)
+	var add_variant := Button.new()
+	add_variant.icon = get_theme_icon(&"Add", &"EditorIcons")
+	add_variant.tooltip_text = "Add a variant, copying the current one"
+	add_variant.pressed.connect(func() -> void: _ask_variant_name("add"))
+	bar.add_child(add_variant)
+	var rename_variant := Button.new()
+	rename_variant.icon = get_theme_icon(&"Rename", &"EditorIcons")
+	rename_variant.tooltip_text = "Rename this variant"
+	rename_variant.pressed.connect(func() -> void: _ask_variant_name("rename"))
+	bar.add_child(rename_variant)
+	var drop_variant := Button.new()
+	drop_variant.icon = get_theme_icon(&"Remove", &"EditorIcons")
+	drop_variant.tooltip_text = "Delete this variant (the last one cannot be deleted)"
+	drop_variant.pressed.connect(_on_variant_removed)
+	bar.add_child(drop_variant)
+	add_child(bar)
+
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -68,12 +96,90 @@ func _ready() -> void:
 	exp.pressed.connect(func() -> void: _pick_gpl_file(true))
 	io.add_child(exp)
 	add_child(io)
+	_sync_variants()
 	_rebuild()
+
+
+# -- variants --
+
+func _sync_variants() -> void:
+	if _variant_picker == null:
+		return
+	_variant_picker.clear()
+	for i in palette.variants.size():
+		_variant_picker.add_item(palette.variants[i], i)
+		if palette.variants[i] == palette.active_variant:
+			_variant_picker.select(i)
+
+
+func _on_variant_selected(p_index: int) -> void:
+	var chosen := String(_variant_picker.get_item_text(p_index))
+	if chosen == palette.active_variant:
+		return
+	undo.create_action("Palette: switch variant")
+	undo.add_do_method(palette, &"set_active_variant", chosen)
+	undo.add_undo_method(palette, &"set_active_variant", palette.active_variant)
+	undo.commit_action()
+
+
+func _ask_variant_name(p_action: String) -> void:
+	_variant_action = p_action
+	if _variant_dialog == null:
+		_variant_dialog = AcceptDialog.new()
+		_variant_field = LineEdit.new()
+		_variant_field.custom_minimum_size = Vector2(240, 0) * EditorInterface.get_editor_scale()
+		_variant_dialog.add_child(_variant_field)
+		_variant_dialog.register_text_enter(_variant_field)
+		_variant_dialog.confirmed.connect(_on_variant_name_confirmed)
+		add_child(_variant_dialog)
+	_variant_dialog.title = "New variant" if p_action == "add" else "Rename variant"
+	_variant_field.text = palette.active_variant if p_action == "rename" else ""
+	_variant_dialog.popup_centered()
+	_variant_field.grab_focus()
+	_variant_field.select_all()
+
+
+func _on_variant_name_confirmed() -> void:
+	var wanted := _variant_field.text.strip_edges()
+	if wanted.is_empty() or wanted in palette.variants:
+		return
+	if _variant_action == "add":
+		undo.create_action("Palette: add variant")
+		undo.add_do_method(palette, &"add_variant", wanted, palette.active_variant)
+		undo.add_do_method(palette, &"set_active_variant", wanted)
+		undo.add_undo_method(palette, &"set_active_variant", palette.active_variant)
+		undo.add_undo_method(palette, &"remove_variant", wanted)
+		undo.commit_action()
+	else:
+		var previous := palette.active_variant
+		undo.create_action("Palette: rename variant")
+		undo.add_do_method(palette, &"rename_variant", previous, wanted)
+		undo.add_undo_method(palette, &"rename_variant", wanted, previous)
+		undo.commit_action()
+
+
+func _on_variant_removed() -> void:
+	if palette.variants.size() <= 1:
+		push_warning("LivePalette: a palette keeps at least one variant")
+		return
+	var doomed := palette.active_variant
+	# Undo re-adds the variant and restores every colour it held.
+	var colors := {}
+	for e in palette.entries:
+		colors[e["id"]] = palette.color_of(e, doomed)
+	undo.create_action("Palette: remove variant")
+	undo.add_do_method(palette, &"remove_variant", doomed)
+	undo.add_undo_method(palette, &"add_variant", doomed, palette.base_variant())
+	for id in colors:
+		undo.add_undo_method(palette, &"set_color", id, colors[id], doomed)
+	undo.add_undo_method(palette, &"set_active_variant", doomed)
+	undo.commit_action()
 
 
 func _sync() -> void:
 	if not is_instance_valid(_rows):
 		return
+	_sync_variants()  # a variant add/rename/switch lands here like any other change
 	var ids: Array = palette.entries.map(func(e: Dictionary) -> Variant: return e["id"])
 	if _row_ids() != ids:
 		_rebuild()  # structural change (add/remove/reorder)
@@ -82,7 +188,7 @@ func _sync() -> void:
 		var row := _rows.get_child(i)
 		var pick: ColorPickerButton = row.get_node("Pick")
 		var edit: LineEdit = row.get_node("Name")
-		pick.color = palette.entries[i]["color"]  # programmatic set: no color_changed echo
+		pick.color = palette.color_of(palette.entries[i])  # programmatic set: no color_changed echo
 		pick.tooltip_text = LivePaletteData.hex(pick.color)
 		if not edit.has_focus():
 			edit.text = str(palette.entries[i]["name"])
@@ -128,7 +234,7 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 	pick.custom_minimum_size = Vector2(side, side)
 	pick.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # square, not stretched to row height
 	pick.add_theme_stylebox_override(&"normal", StyleBoxEmpty.new())  # no padding: color fills the button
-	pick.color = p_entry["color"]
+	pick.color = palette.color_of(p_entry)
 	pick.tooltip_text = LivePaletteData.hex(pick.color)
 	var pre_edit := [Color.WHITE]  # old color, captured when the popup opens
 	pick.pressed.connect(func() -> void:
@@ -176,10 +282,14 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 		var i := palette.find_index(id)
 		if i < 0:
 			return
-		var e: Dictionary = palette.entries[i].duplicate()
+		var e: Dictionary = palette.entries[i].duplicate(true)
 		undo.create_action("Palette: remove color")
 		undo.add_do_method(palette, &"remove_entry", id)
-		undo.add_undo_method(palette, &"add_entry", id, e["name"], e["color"], i)  # restores position
+		# Restores position, then each variant's own colour: add_entry alone would
+		# give every variant the same one.
+		undo.add_undo_method(palette, &"add_entry", id, e["name"], palette.color_of(e), i)
+		for variant in palette.variants:
+			undo.add_undo_method(palette, &"set_color", id, palette.color_of(e, variant), variant)
 		undo.commit_action())
 	row.add_child(del)
 	return row
@@ -193,7 +303,7 @@ func _drag_entry(_at: Vector2, p_id: String, p_from: Control) -> Variant:
 		return null
 	var side := SWATCH_SIZE * EditorInterface.get_editor_scale()
 	var preview := ColorRect.new()  # ghost that follows the cursor
-	preview.color = palette.entries[i]["color"]
+	preview.color = palette.color_of(palette.entries[i])
 	preview.custom_minimum_size = Vector2(side, side)
 	preview.size = Vector2(side, side)
 	p_from.set_drag_preview(preview)

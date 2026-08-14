@@ -20,6 +20,8 @@ func _enter_tree() -> void:
 		_ensure_data_dir()
 		ResourceSaver.save(LivePaletteData.new(), PALETTE_PATH)
 	palette = load(PALETTE_PATH) as LivePaletteData
+	if palette.migrate():  # pre-1.1 single-color entries become one-variant maps
+		ResourceSaver.save(palette)
 	palette.changed.connect(_on_palette_changed)
 	_save_timer = Timer.new()
 	_save_timer.one_shot = true
