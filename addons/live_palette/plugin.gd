@@ -8,7 +8,7 @@ const CONST_CLASS := "LivePalette"
 const RUNTIME_PATH := "res://addons/live_palette/palette_runtime.gd"
 const AUTOLOAD_NAME := "LivePaletteRuntime"
 
-var palette: LivePaletteData  # the default palette, kept for convenience
+var palette: LivePaletteData
 var palette_set: LivePaletteSet
 var dock
 var inspector
@@ -29,7 +29,7 @@ func _enter_tree() -> void:
 	_save_timer.timeout.connect(_flush_save)
 	add_child(_save_timer)
 	dock = load("res://addons/live_palette/dock.gd").new()
-	dock.name = "Palette"  # dock tab title
+	dock.name = "Palette"
 	dock.setup(palette_set, get_undo_redo())
 	dock.generate_requested.connect(_write_const_script)
 	dock.palette_created.connect(_on_palette_created)
@@ -58,15 +58,12 @@ func _enable_plugin() -> void:
 	add_autoload_singleton(AUTOLOAD_NAME, RUNTIME_PATH)
 
 
-## Versions before 1.0 registered the runtime autoload as "LivePalette", the name the
-## generated constants class now uses. Left in place, Godot refuses to parse that class
-## ("hides an autoload singleton") and every script referencing it fails with it.
 func _migrate_legacy_autoload() -> void:
 	var key := "autoload/" + CONST_CLASS
 	if not ProjectSettings.has_setting(key):
 		return
 	if not _resolve_autoload_path(str(ProjectSettings.get_setting(key))).ends_with("palette_runtime.gd"):
-		return  # somebody else's autoload: leave it alone, _write_const_script reports the clash
+		return
 	remove_autoload_singleton(CONST_CLASS)
 	if not ProjectSettings.has_setting("autoload/" + AUTOLOAD_NAME):
 		add_autoload_singleton(AUTOLOAD_NAME, RUNTIME_PATH)
@@ -74,7 +71,6 @@ func _migrate_legacy_autoload() -> void:
 	push_warning("LivePalette: renamed the leftover '%s' autoload from an older version to '%s'. Restart the editor if scripts still report a collision." % [CONST_CLASS, AUTOLOAD_NAME])
 
 
-## Autoload values are "*res://path.gd" or "*uid://abc"; return the script path either way.
 func _resolve_autoload_path(p_value: String) -> String:
 	var v := p_value.trim_prefix("*")
 	if v.begins_with("uid://"):
@@ -87,13 +83,11 @@ func _disable_plugin() -> void:
 	remove_autoload_singleton(AUTOLOAD_NAME)
 
 
-## Loads every palette in the data folder and listens to each, so a second palette
-## behaves exactly like the first.
 func _reload_palettes() -> void:
 	palette_set.load_all()
 	for stem in palette_set.palettes:
 		var data: LivePaletteData = palette_set.palettes[stem]
-		if data.migrate():  # pre-1.1 single-color entries become one-variant maps
+		if data.migrate():
 			ResourceSaver.save(data)
 		if not data.changed.is_connected(_on_palette_changed):
 			data.changed.connect(_on_palette_changed)
@@ -125,7 +119,7 @@ func _apply_all() -> void:
 
 
 func _open_roots() -> Array:
-	if EditorInterface.has_method("get_open_scene_roots"):  # 4.7+; absent in 4.4
+	if EditorInterface.has_method("get_open_scene_roots"):
 		return EditorInterface.call("get_open_scene_roots")
 	var r := EditorInterface.get_edited_scene_root()
 	return [r] if r else []
@@ -146,8 +140,6 @@ func _ensure_data_dir() -> void:
 		DirAccess.make_dir_recursive_absolute(DATA_DIR)
 
 
-## One generated file for every palette: the default at the top level, the rest as
-## nested classes, so there is a single class name to keep free.
 func _write_const_script() -> void:
 	if ProjectSettings.has_setting("autoload/" + CONST_CLASS):
 		push_error("LivePalette: an autoload named '%s' already exists, so the generated class can't use that name (Godot: \"hides an autoload singleton\"). Rename that autoload in Project Settings > Autoload, then delete %s to regenerate it." % [CONST_CLASS, CONST_SCRIPT_PATH])
@@ -171,12 +163,9 @@ func _write_const_script() -> void:
 	var fs := EditorInterface.get_resource_filesystem()
 	fs.update_file(CONST_SCRIPT_PATH)
 	if not existed:
-		fs.scan()  # a new class_name only registers after a rescan
+		fs.scan()
 
 
-## An earlier build wrote one file per palette (ui_const.gd -> class UiPalette).
-## Those keep declaring stale classes, so clear them out — but only files this addon
-## actually generated, identified by the header it writes.
 func _remove_stale_const_scripts() -> void:
 	for file in DirAccess.get_files_at(DATA_DIR):
 		var path := "%s/%s" % [DATA_DIR, file]

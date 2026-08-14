@@ -5,14 +5,10 @@ extends Resource
 const META := &"_live_palette_bindings"
 const DEFAULT_VARIANT := "Default"
 
-## [{id: String, name: String, colors: {variant_name: Color}}]. Pre-1.1 entries
-## carry a single "color" instead and are read through the same accessors.
 @export var entries: Array[Dictionary] = []
 
-## Ordered; the first is the fallback for any entry a variant has no color for.
 @export var variants: PackedStringArray = PackedStringArray([DEFAULT_VARIANT])
 
-## The variant currently applied, in the editor and at startup.
 @export var active_variant: String = DEFAULT_VARIANT
 
 
@@ -23,8 +19,6 @@ func find_index(p_id: String) -> int:
 	return -1
 
 
-## Empty p_variant means the active one. Falls back to the first variant when this
-## one has no color for the entry, so a half-filled variant still renders.
 func get_color_by_id(p_id: String, p_variant: String = "") -> Color:
 	var i := find_index(p_id)
 	if i < 0:
@@ -47,7 +41,6 @@ func has_color_name(p_name: StringName) -> bool:
 	return false
 
 
-## Reads one entry, tolerating both the 1.1 "colors" map and the pre-1.1 "color".
 func color_of(p_entry: Dictionary, p_variant: String = "") -> Color:
 	if not p_entry.has("colors"):
 		return p_entry.get("color", Color.WHITE)
@@ -65,14 +58,10 @@ func base_variant() -> String:
 	return variants[0] if not variants.is_empty() else DEFAULT_VARIANT
 
 
-# -- variants --
-
 func add_variant(p_name: String, p_copy_from: String = "") -> void:
 	if p_name.is_empty() or p_name in variants:
 		return
 	variants.append(p_name)
-	# A new variant starts as a copy, so it is a recolor of a working set rather
-	# than a screen full of white.
 	var source: String = p_copy_from if p_copy_from != "" else active_variant
 	for e in entries:
 		if e.has("colors"):
@@ -82,7 +71,7 @@ func add_variant(p_name: String, p_copy_from: String = "") -> void:
 
 func remove_variant(p_name: String) -> void:
 	if variants.size() <= 1 or not p_name in variants:
-		return  # never leave the palette with no variant at all
+		return
 	variants.remove_at(variants.find(p_name))
 	for e in entries:
 		if e.has("colors"):
@@ -109,11 +98,9 @@ func set_active_variant(p_name: String) -> void:
 	if p_name == active_variant or not p_name in variants:
 		return
 	active_variant = p_name
-	emit_changed()  # the editor and the autoload both re-apply from here
+	emit_changed()
 
 
-## Rewrites pre-1.1 entries in place. Returns true when anything changed, so the
-## caller can save. Read access works without it; this just makes it permanent.
 func migrate() -> bool:
 	var changed := false
 	if variants.is_empty():
@@ -128,9 +115,6 @@ func migrate() -> bool:
 		e["colors"] = {base_variant(): e.get("color", Color.WHITE)}
 		e.erase("color")
 		changed = true
-	# Duplicates predate the uniqueness rule (a .gpl import appends blindly, and a
-	# .tres can be hand-edited). Settle them once so the generated constants stop
-	# depending on entry order.
 	var seen := {}
 	for e in entries:
 		var display: String = str(e["name"])
@@ -143,13 +127,6 @@ func migrate() -> bool:
 	return changed
 
 
-## A name no other entry in this palette is using: "Panel" becomes "Panel 2", then
-## "Panel 3". The suffix is chosen to match what the constants generator already
-## produces for a clash, so LivePalette.PANEL_2 keeps meaning the same entry.
-##
-## Names must be unique because they are the public key: the generated constants and
-## every by-name lookup go through them. With duplicates, reordering the palette
-## silently swaps which entry PANEL refers to.
 func unique_name(p_name: String, p_except_id: String = "") -> String:
 	var wanted := p_name.strip_edges()
 	if wanted.is_empty():
@@ -176,16 +153,10 @@ func new_id() -> String:
 	return id
 
 
-# -- mutators: the sole write path; each emits changed --
-
-## A new entry gets p_color in every variant: an entry that exists in one variant
-## and not another is the one state the fallback cannot paper over sensibly.
 func add_entry(p_id: String, p_name: String, p_color: Color, p_index: int = -1) -> void:
 	var colors := {}
 	for variant in variants:
 		colors[variant] = p_color
-	# Enforced here rather than at each call site, so importing a .gpl, adding a row
-	# and any future path all get unique names for free.
 	var e := {"id": p_id, "name": unique_name(p_name, p_id), "colors": colors}
 	if p_index < 0 or p_index >= entries.size():
 		entries.append(e)
@@ -208,7 +179,6 @@ func rename_entry(p_id: String, p_name: String) -> void:
 		emit_changed()
 
 
-## p_to_index is the entry's index in the resulting array, so undo is move_entry(id, old_index).
 func move_entry(p_id: String, p_to_index: int) -> void:
 	var i := find_index(p_id)
 	if i < 0:
@@ -219,7 +189,6 @@ func move_entry(p_id: String, p_to_index: int) -> void:
 	emit_changed()
 
 
-## Empty p_variant writes the active one, so the dock edits what it is showing.
 func set_color(p_id: String, p_color: Color, p_variant: String = "") -> void:
 	var i := find_index(p_id)
 	if i < 0:
@@ -232,9 +201,6 @@ func set_color(p_id: String, p_color: Color, p_variant: String = "") -> void:
 	emit_changed()
 
 
-# -- constants script generation (text only; the plugin writes the file) --
-
-## "Sky Blue" -> "SKY_BLUE". Returns "" when nothing usable is left.
 static func const_identifier(p_name: String) -> String:
 	var out := ""
 	for c in p_name.to_upper():
@@ -245,26 +211,16 @@ static func const_identifier(p_name: String) -> String:
 	if out.is_empty():
 		return ""
 	if out[0] >= "0" and out[0] <= "9":
-		out = "C_" + out  # identifiers can't start with a digit
+		out = "C_" + out
 	return out
 
 
-## The generated constants for ONE palette: its entries, a name-keyed table, every
-## variant and the static helpers. p_indent prefixes every line, so the same text
-## sits at file level (the default palette) or inside a nested class (the others) —
-## which is what lets every palette be reached through a single LivePalette class.
-##
-## Constants come from the base variant so they never move when the active variant
-## changes; every variant is also emitted in the VARIANTS table.
 func build_const_body(p_owner: String, p_indent: String = "") -> String:
 	var consts := PackedStringArray()
 	var pairs := PackedStringArray()
 	var used := {}
 	var base := base_variant()
-	# Two entries may share a display name (ids keep them apart). Every entry still
-	# gets its own constant, but the name-keyed tables take the first only: a
-	# repeated key is a parse error that would take the whole generated class down.
-	var named := []  # [{entry, ident}] for the entries that own their display name
+	var named := []
 	var claimed := {}
 	var duplicates := PackedStringArray()
 	for e in entries:
@@ -273,7 +229,7 @@ func build_const_body(p_owner: String, p_indent: String = "") -> String:
 			ident = "C_" + str(e["id"]).to_upper()
 		var stem := ident
 		var n := 2
-		while used.has(ident):  # two names can sanitize to the same identifier
+		while used.has(ident):
 			ident = "%s_%d" % [stem, n]
 			n += 1
 		used[ident] = true
@@ -339,17 +295,12 @@ func build_const_body(p_owner: String, p_indent: String = "") -> String:
 
 	if p_indent.is_empty():
 		return "\n".join(body)
-	# Split the joined text, not the array: some entries (the variant rows) are
-	# themselves multi-line, and indenting per element would only shift their first line.
 	var indented := PackedStringArray()
 	for line in "\n".join(body).split("\n"):
 		indented.append(p_indent + line if not line.is_empty() else "")
 	return "\n".join(indented)
 
 
-# -- GIMP .gpl import/export (the palette format Lospec, Aseprite and Krita speak) --
-
-## Parses .gpl text into [{name: String, color: Color}]. Unparseable lines are skipped.
 static func parse_gpl(p_text: String) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var rgba := false
@@ -360,7 +311,7 @@ static func parse_gpl(p_text: String) -> Array[Dictionary]:
 		var lower := line.to_lower()
 		if lower.begins_with("gimp palette") or lower.begins_with("name:") or lower.begins_with("columns:"):
 			continue
-		if lower.begins_with("channels:"):  # Krita writes "Channels: RGBA" for 4-value lines
+		if lower.begins_with("channels:"):
 			rgba = lower.contains("rgba")
 			continue
 		var tokens := line.replace("\t", " ").split(" ", false)
@@ -380,26 +331,21 @@ static func parse_gpl(p_text: String) -> Array[Dictionary]:
 	return out
 
 
-## The format is RGB: alpha is flattened on export.
 func to_gpl(p_palette_name: String) -> String:
 	var lines := PackedStringArray(["GIMP Palette",
 			"Name: %s (%s)" % [p_palette_name, active_variant], "Columns: 8", "#"])
 	for e in entries:
-		var c: Color = color_of(e)  # the active variant: what the dock is showing
+		var c: Color = color_of(e)
 		lines.append("%d %d %d\t%s" % [c.r8, c.g8, c.b8, e["name"]])
 	return "\n".join(lines) + "\n"
 
 
-# -- uses scan --
-
-## Counts references to p_id inside _live_palette_bindings blocks of a .tscn/.tres text.
-## Ignores the id appearing anywhere else in the file.
 static func find_uses_in_text(p_text: String, p_id: String) -> int:
 	var needle := "\"%s\"" % p_id
 	var n := 0
 	var from := p_text.find(String(META))
 	while from >= 0:
-		var close := p_text.find("}", from)  # binding dict holds only strings: first } closes it
+		var close := p_text.find("}", from)
 		if close < 0:
 			close = p_text.length()
 		n += p_text.substr(from, close - from).count(needle)
@@ -434,7 +380,7 @@ func apply_to_object(p_obj: Object, p_visited: Dictionary) -> int:
 			var i := find_index(str(bindings[prop]))
 			if i < 0:
 				continue
-			var c: Color = color_of(entries[i])  # whichever variant is active
+			var c: Color = color_of(entries[i])
 			var cur: Variant = p_obj.get(prop)
 			if cur is Color and not cur.is_equal_approx(c):
 				p_obj.set(prop, c)

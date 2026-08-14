@@ -11,26 +11,26 @@ func setup(p_set: LivePaletteSet, p_undo: EditorUndoRedoManager) -> void:
 
 
 func _can_handle(p_object: Object) -> bool:
-	return not (p_object is LivePaletteData)  # no self-binding on a palette itself
+	return not (p_object is LivePaletteData)
 
 
 func _parse_property(p_object: Object, p_type: Variant.Type, p_name: String, p_hint: PropertyHint, p_hint_string: String, p_usage: int, p_wide: bool) -> bool:
 	if p_type == TYPE_COLOR:
 		add_property_editor(p_name, PaletteProp.new(palette_set, undo), true, "Palette")
-	return false  # keep the built-in color picker
+	return false
 
 
 class PaletteProp:
 	extends EditorProperty
 
 	const COLUMNS := 8
-	const CELL := 24  # swatch side, in unscaled editor pixels (matches the dock swatch)
+	const CELL := 24
 
 	var _set: LivePaletteSet
 	var _undo: EditorUndoRedoManager
 	var _btn := Button.new()
 	var _popup := PopupPanel.new()
-	var _groups := VBoxContainer.new()  # one titled grid per palette
+	var _groups := VBoxContainer.new()
 	var _unlink := Button.new()
 	var _empty := Label.new()
 
@@ -54,8 +54,6 @@ class PaletteProp:
 		for stem in _set.palettes:
 			(_set.palettes[stem] as LivePaletteData).changed.connect(update_property)
 
-	## Every palette in one popup, each grid titled once there is more than one to
-	## tell apart. Picking is still by id, so which palette it came from is implicit.
 	func _open_popup() -> void:
 		for c in _groups.get_children():
 			_groups.remove_child(c)
@@ -88,7 +86,7 @@ class PaletteProp:
 		var id := str(p_entry["id"])
 		var cell := Button.new()
 		cell.custom_minimum_size = Vector2(p_side, p_side)
-		var swatch_color: Color = p_data.color_of(p_entry)  # the active variant
+		var swatch_color: Color = p_data.color_of(p_entry)
 		cell.tooltip_text = "%s\n%s" % [p_entry["name"], LivePaletteData.hex(swatch_color)]
 		cell.add_theme_stylebox_override(&"normal", _cell_style(swatch_color, id == p_current))
 		var hi := _cell_style(swatch_color, true)
@@ -113,7 +111,7 @@ class PaletteProp:
 		var b: Dictionary = obj.get_meta(LivePaletteData.META, {})
 		return str(b.get(str(get_edited_property()), ""))
 
-	func _pick(p_entry_id: String) -> void:  # "" unlinks
+	func _pick(p_entry_id: String) -> void:
 		_popup.hide()
 		var entry_id := p_entry_id
 		var obj := get_edited_object()
@@ -147,7 +145,7 @@ class PaletteProp:
 			_btn.text = "Palette..."
 			_btn.icon = null
 			return
-		var found := _set.find_entry(id)  # any palette may own this id
+		var found := _set.find_entry(id)
 		if found.is_empty():
 			_btn.text = "missing: %s" % id
 			_btn.icon = null

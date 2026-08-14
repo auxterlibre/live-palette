@@ -4,25 +4,25 @@ extends VBoxContainer
 signal generate_requested
 signal palette_created(stem: String)
 
-const SWATCH_SIZE := 24  # square swatch side, in unscaled editor pixels
+const SWATCH_SIZE := 24
 const DRAG_KEY := "live_palette_entry"
-const SCAN_EXTENSIONS := ["tscn", "escn", "tres", "theme"]  # text formats Find Uses can read
+const SCAN_EXTENSIONS := ["tscn", "escn", "tres", "theme"]
 
-var palette: LivePaletteData  # the one being edited, chosen by the palette picker
+var palette: LivePaletteData
 var palette_set: LivePaletteSet
 var undo: EditorUndoRedoManager
 var _stem: String = LivePaletteSet.DEFAULT_STEM
 var _palette_picker: OptionButton
 
 var _rows: VBoxContainer
-var _drop_row := -1  # row index the reorder indicator sits above; -1 = hidden
+var _drop_row := -1
 var _empty_hint: Label
 var _uses_dlg: AcceptDialog
 var _uses_list: ItemList
 var _variant_picker: OptionButton
 var _variant_dialog: AcceptDialog
 var _variant_field: LineEdit
-var _variant_action := ""  # "add" or "rename", for the shared name dialog
+var _variant_action := ""
 
 
 func setup(p_set: LivePaletteSet, p_undo: EditorUndoRedoManager) -> void:
@@ -48,8 +48,6 @@ func select_palette(p_stem: String) -> void:
 
 
 func _ready() -> void:
-	# Palette bar: which palette is being edited. Several coexist and all apply at
-	# once; this only chooses what the rows below show.
 	var palette_bar := HBoxContainer.new()
 	_palette_picker = OptionButton.new()
 	_palette_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -63,7 +61,6 @@ func _ready() -> void:
 	palette_bar.add_child(add_palette)
 	add_child(palette_bar)
 
-	# Variant bar: which colour set the dock edits and the editor previews.
 	var bar := HBoxContainer.new()
 	_variant_picker = OptionButton.new()
 	_variant_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -93,7 +90,7 @@ func _ready() -> void:
 	add_child(scroll)
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.set_drag_forwarding(Callable(), _list_can_drop, _list_drop)  # drop below the last row
+	list.set_drag_forwarding(Callable(), _list_can_drop, _list_drop)
 	scroll.add_child(list)
 	_rows = VBoxContainer.new()
 	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -136,8 +133,6 @@ func _ready() -> void:
 	_rebuild()
 
 
-# -- palettes --
-
 func _sync_palettes() -> void:
 	if _palette_picker == null or palette_set == null:
 		return
@@ -147,7 +142,7 @@ func _sync_palettes() -> void:
 		_palette_picker.add_item(String(stems[i]).capitalize(), i)
 		if stems[i] == _stem:
 			_palette_picker.select(i)
-	_palette_picker.visible = stems.size() > 1  # one palette needs no picker
+	_palette_picker.visible = stems.size() > 1
 
 
 func _on_palette_selected(p_index: int) -> void:
@@ -165,7 +160,6 @@ func _ask_palette_name() -> void:
 	_variant_field.grab_focus()
 
 
-## Writes a new empty palette resource; the plugin reloads the set and selects it.
 func _create_palette(p_name: String) -> void:
 	var stem := p_name.to_snake_case()
 	if stem.is_empty() or palette_set.palettes.has(stem):
@@ -179,8 +173,6 @@ func _create_palette(p_name: String) -> void:
 	EditorInterface.get_resource_filesystem().update_file(path)
 	palette_created.emit(stem)
 
-
-# -- variants --
 
 func _sync_variants() -> void:
 	if _variant_picker == null:
@@ -253,7 +245,6 @@ func _on_variant_removed() -> void:
 		push_warning("LivePalette: a palette keeps at least one variant")
 		return
 	var doomed := palette.active_variant
-	# Undo re-adds the variant and restores every colour it held.
 	var colors := {}
 	for e in palette.entries:
 		colors[e["id"]] = palette.color_of(e, doomed)
@@ -269,16 +260,16 @@ func _on_variant_removed() -> void:
 func _sync() -> void:
 	if not is_instance_valid(_rows):
 		return
-	_sync_variants()  # a variant add/rename/switch lands here like any other change
+	_sync_variants()
 	var ids: Array = palette.entries.map(func(e: Dictionary) -> Variant: return e["id"])
 	if _row_ids() != ids:
-		_rebuild()  # structural change (add/remove/reorder)
+		_rebuild()
 		return
-	for i in _rows.get_child_count():  # in-place: never frees an open picker popup
+	for i in _rows.get_child_count():
 		var row := _rows.get_child(i)
 		var pick: ColorPickerButton = row.get_node("Pick")
 		var edit: LineEdit = row.get_node("Name")
-		pick.color = palette.color_of(palette.entries[i])  # programmatic set: no color_changed echo
+		pick.color = palette.color_of(palette.entries[i])
 		pick.tooltip_text = LivePaletteData.hex(pick.color)
 		if not edit.has_focus():
 			edit.text = str(palette.entries[i]["name"])
@@ -293,9 +284,6 @@ func _row_ids() -> Array:
 
 func _rebuild() -> void:
 	for c in _rows.get_children():
-		# remove_child takes the row out of _row_ids() immediately; queue_free defers the
-		# delete, because a rebuild often runs from a signal emitted by a button inside it
-		# (deleting a color) and freeing that button mid-emission is an engine error.
 		_rows.remove_child(c)
 		c.queue_free()
 	for e in palette.entries:
@@ -307,7 +295,6 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 	var id: String = p_entry["id"]
 	var row := HBoxContainer.new()
 	row.set_meta(&"entry_id", id)
-	# Drag to reorder: from the grip or the row background; every row is also a drop target.
 	row.set_drag_forwarding(_drag_entry.bind(id, row), _row_can_drop.bind(row), _row_drop.bind(row))
 
 	var grip := TextureRect.new()
@@ -322,15 +309,15 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 	pick.name = "Pick"
 	var side := SWATCH_SIZE * EditorInterface.get_editor_scale()
 	pick.custom_minimum_size = Vector2(side, side)
-	pick.size_flags_vertical = Control.SIZE_SHRINK_CENTER  # square, not stretched to row height
-	pick.add_theme_stylebox_override(&"normal", StyleBoxEmpty.new())  # no padding: color fills the button
+	pick.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	pick.add_theme_stylebox_override(&"normal", StyleBoxEmpty.new())
 	pick.color = palette.color_of(p_entry)
 	pick.tooltip_text = LivePaletteData.hex(pick.color)
-	var pre_edit := [Color.WHITE]  # old color, captured when the popup opens
+	var pre_edit := [Color.WHITE]
 	pick.pressed.connect(func() -> void:
 		pre_edit[0] = palette.get_color_by_id(id))
 	pick.color_changed.connect(func(p_color: Color) -> void:
-		palette.set_color(id, p_color))  # live preview while dragging
+		palette.set_color(id, p_color))
 	pick.popup_closed.connect(func() -> void:
 		if not pick.color.is_equal_approx(pre_edit[0]):
 			undo.create_action("Palette: set color")
@@ -349,15 +336,12 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 			return
 		var old_name: String = palette.entries[i]["name"]
 		if edit.text.is_empty() or edit.text == old_name:
-			edit.text = old_name  # revert empty/no-op edits
+			edit.text = old_name
 			return
 		undo.create_action("Palette: rename color")
 		undo.add_do_method(palette, &"rename_entry", id, edit.text)
 		undo.add_undo_method(palette, &"rename_entry", id, old_name)
 		undo.commit_action()
-		# The name may have been suffixed to keep it unique; show what was stored
-		# rather than what was typed. _sync leaves a focused field alone, and the
-		# field still has focus after Enter.
 		var settled := palette.find_index(id)
 		if settled >= 0:
 			edit.text = str(palette.entries[settled]["name"])
@@ -381,8 +365,6 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 		var e: Dictionary = palette.entries[i].duplicate(true)
 		undo.create_action("Palette: remove color")
 		undo.add_do_method(palette, &"remove_entry", id)
-		# Restores position, then each variant's own colour: add_entry alone would
-		# give every variant the same one.
 		undo.add_undo_method(palette, &"add_entry", id, e["name"], palette.color_of(e), i)
 		for variant in palette.variants:
 			undo.add_undo_method(palette, &"set_color", id, palette.color_of(e, variant), variant)
@@ -391,14 +373,12 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 	return row
 
 
-# -- reorder (drag and drop, like the inspector's array editor) --
-
 func _drag_entry(_at: Vector2, p_id: String, p_from: Control) -> Variant:
 	var i := palette.find_index(p_id)
 	if i < 0:
 		return null
 	var side := SWATCH_SIZE * EditorInterface.get_editor_scale()
-	var preview := ColorRect.new()  # ghost that follows the cursor
+	var preview := ColorRect.new()
 	preview.color = palette.color_of(palette.entries[i])
 	preview.custom_minimum_size = Vector2(side, side)
 	preview.size = Vector2(side, side)
@@ -418,7 +398,6 @@ func _row_drop(p_at: Vector2, p_data: Variant, p_row: Control) -> void:
 
 
 func _list_can_drop(_at: Vector2, p_data: Variant) -> bool:
-	# The area below the last row (hint, Add Color, gaps): drop appends at the end.
 	if not (p_data is Dictionary and p_data.has(DRAG_KEY)):
 		return false
 	_set_drop_row(_rows.get_child_count())
@@ -441,12 +420,10 @@ func _commit_move(p_id: String, p_before: int) -> void:
 	undo.commit_action()
 
 
-## Row index the dragged entry would be inserted before (top half = above this row).
 func _drop_before(p_row: Control, p_local_y: float) -> int:
 	return p_row.get_index() if p_local_y < p_row.size.y * 0.5 else p_row.get_index() + 1
 
 
-## Where an entry dragged from p_from lands once removed and re-inserted before p_before.
 static func final_index(p_from: int, p_before: int) -> int:
 	return p_before - 1 if p_from < p_before else p_before
 
@@ -458,7 +435,7 @@ func _set_drop_row(p_before: int) -> void:
 
 
 func _notification(p_what: int) -> void:
-	if p_what == NOTIFICATION_DRAG_END:  # drag cancelled or dropped elsewhere
+	if p_what == NOTIFICATION_DRAG_END:
 		_set_drop_row(-1)
 
 
@@ -471,11 +448,9 @@ func _draw_drop_indicator() -> void:
 	_rows.draw_line(Vector2(0, y), Vector2(_rows.size.x, y), get_theme_color(&"accent_color", &"Editor"), 2.0)
 
 
-# -- GIMP .gpl import/export --
-
 func _pick_gpl_file(p_save: bool) -> void:
 	var dlg := EditorFileDialog.new()
-	dlg.access = EditorFileDialog.ACCESS_FILESYSTEM  # palettes usually live outside the project
+	dlg.access = EditorFileDialog.ACCESS_FILESYSTEM
 	dlg.file_mode = EditorFileDialog.FILE_MODE_SAVE_FILE if p_save else EditorFileDialog.FILE_MODE_OPEN_FILE
 	dlg.add_filter("*.gpl", "GIMP Palette")
 	dlg.title = "Export Palette as .gpl" if p_save else "Import .gpl Palette"
@@ -493,7 +468,7 @@ func _import_gpl(p_path: String) -> void:
 	if parsed.is_empty():
 		push_warning("LivePalette: nothing importable in %s" % p_path)
 		return
-	var taken := {}  # new_id() can't see ids that are only queued in the pending action
+	var taken := {}
 	undo.create_action("Palette: import %s" % p_path.get_file())
 	for i in parsed.size():
 		var id := palette.new_id()
@@ -516,8 +491,6 @@ func _export_gpl(p_path: String) -> void:
 	f.store_string(palette.to_gpl(str(ProjectSettings.get_setting("application/config/name", "Palette"))))
 	f.close()
 
-
-# -- find uses (per-row search button) --
 
 func _find_uses(p_id: String) -> void:
 	var i := palette.find_index(p_id)
@@ -544,7 +517,6 @@ func _find_uses(p_id: String) -> void:
 	_uses_dlg.popup_centered()
 
 
-## Text scan of saved files — unsaved editor changes and binary .scn/.res are not seen.
 func _scan_dir(p_dir: String, p_id: String, p_hits: Array[Dictionary]) -> void:
 	var d := DirAccess.open(p_dir)
 	if d == null:
@@ -554,7 +526,7 @@ func _scan_dir(p_dir: String, p_id: String, p_hits: Array[Dictionary]) -> void:
 	while not f.is_empty():
 		var path := p_dir.path_join(f)
 		if d.current_is_dir():
-			if not f.begins_with("."):  # skips .godot, .git
+			if not f.begins_with("."):
 				_scan_dir(path, p_id, p_hits)
 		elif f.get_extension() in SCAN_EXTENSIONS:
 			var n := LivePaletteData.find_uses_in_text(FileAccess.get_file_as_string(path), p_id)
@@ -572,7 +544,7 @@ func _on_use_activated(p_index: int) -> void:
 
 
 func _on_add_pressed() -> void:
-	var id := palette_set.new_id()  # unique across every palette, not just this one
+	var id := palette_set.new_id()
 	undo.create_action("Palette: add color")
 	undo.add_do_method(palette, &"add_entry", id, "Color %d" % (palette.entries.size() + 1), Color.WHITE, -1)
 	undo.add_undo_method(palette, &"remove_entry", id)
