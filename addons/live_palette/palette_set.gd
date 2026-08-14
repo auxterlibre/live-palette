@@ -21,7 +21,6 @@ func load_all() -> void:
 		var data: LivePaletteData = load("%s/%s.tres" % [DIR, stem]) as LivePaletteData
 		if data != null:
 			palettes[stem] = data
-	warn_on_duplicate_ids()
 
 
 func stems() -> Array:
@@ -96,15 +95,28 @@ func new_id() -> String:
 	return id
 
 
-func warn_on_duplicate_ids() -> void:
+func repair_duplicate_ids() -> PackedStringArray:
+	var repaired := PackedStringArray()
 	var seen := {}
+	var all_ids := PackedStringArray()
 	for stem in stems():
 		for entry in (palettes[stem] as LivePaletteData).entries:
+			all_ids.append(str(entry["id"]))
+	for stem in stems():
+		var data: LivePaletteData = palettes[stem]
+		for entry in data.entries:
 			var id: String = str(entry["id"])
-			if seen.has(id):
-				push_warning("LivePalette: id '%s' is in both '%s' and '%s'; bindings to it resolve to the first. Give one of them a fresh id." % [id, seen[id], stem])
-			else:
-				seen[id] = stem
+			if not seen.has(id):
+				seen[id] = "%s/%s" % [stem, entry["name"]]
+				continue
+			var fresh := data.new_id(all_ids)
+			all_ids.append(fresh)
+			entry["id"] = fresh
+			seen[fresh] = "%s/%s" % [stem, entry["name"]]
+			if not stem in repaired:
+				repaired.append(stem)
+			push_warning("LivePalette: '%s' in %s.tres shared the id %s with %s, so picking it applied that other color. It now has the id %s; anything already bound to it must be picked again." % [entry["name"], stem, id, seen[id], fresh])
+	return repaired
 
 
 func set_variant(p_variant: String) -> int:

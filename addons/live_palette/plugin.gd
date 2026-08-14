@@ -85,9 +85,10 @@ func _disable_plugin() -> void:
 
 func _reload_palettes() -> void:
 	palette_set.load_all()
+	var repaired := palette_set.repair_duplicate_ids()
 	for stem in palette_set.palettes:
 		var data: LivePaletteData = palette_set.palettes[stem]
-		if data.migrate():
+		if data.migrate() or stem in repaired:
 			ResourceSaver.save(data)
 		if not data.changed.is_connected(_on_palette_changed):
 			data.changed.connect(_on_palette_changed)

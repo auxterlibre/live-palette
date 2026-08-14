@@ -146,9 +146,9 @@ func _name_taken(p_name: String, p_except_id: String) -> bool:
 	return false
 
 
-func new_id() -> String:
+func new_id(p_also_avoid: PackedStringArray = PackedStringArray()) -> String:
 	var id := generate_scene_unique_id()
-	while find_index(id) >= 0:
+	while find_index(id) >= 0 or id in p_also_avoid:
 		id = generate_scene_unique_id()
 	return id
 

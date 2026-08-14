@@ -471,9 +471,9 @@ func _import_gpl(p_path: String) -> void:
 	var taken := {}
 	undo.create_action("Palette: import %s" % p_path.get_file())
 	for i in parsed.size():
-		var id := palette.new_id()
+		var id := palette_set.new_id()
 		while taken.has(id):
-			id = palette.new_id()
+			id = palette_set.new_id()
 		taken[id] = true
 		var entry_name := str(parsed[i]["name"])
 		if entry_name.is_empty():
