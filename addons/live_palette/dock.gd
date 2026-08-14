@@ -2,13 +2,17 @@
 extends VBoxContainer
 
 signal generate_requested
+signal palette_created(stem: String)
 
 const SWATCH_SIZE := 24  # square swatch side, in unscaled editor pixels
 const DRAG_KEY := "live_palette_entry"
 const SCAN_EXTENSIONS := ["tscn", "escn", "tres", "theme"]  # text formats Find Uses can read
 
-var palette: LivePaletteData
+var palette: LivePaletteData  # the one being edited, chosen by the palette picker
+var palette_set: LivePaletteSet
 var undo: EditorUndoRedoManager
+var _stem: String = LivePaletteSet.DEFAULT_STEM
+var _palette_picker: OptionButton
 
 var _rows: VBoxContainer
 var _drop_row := -1  # row index the reorder indicator sits above; -1 = hidden
@@ -21,13 +25,44 @@ var _variant_field: LineEdit
 var _variant_action := ""  # "add" or "rename", for the shared name dialog
 
 
-func setup(p_palette: LivePaletteData, p_undo: EditorUndoRedoManager) -> void:
-	palette = p_palette
+func setup(p_set: LivePaletteSet, p_undo: EditorUndoRedoManager) -> void:
+	palette_set = p_set
 	undo = p_undo
-	palette.changed.connect(_sync)
+	if not palette_set.palettes.has(_stem):
+		_stem = String(palette_set.stems()[0]) if not palette_set.is_empty() else LivePaletteSet.DEFAULT_STEM
+	palette = palette_set.get_palette(_stem)
+	for stem in palette_set.palettes:
+		var data: LivePaletteData = palette_set.palettes[stem]
+		if not data.changed.is_connected(_sync):
+			data.changed.connect(_sync)
+
+
+func select_palette(p_stem: String) -> void:
+	if not palette_set.palettes.has(p_stem):
+		return
+	_stem = p_stem
+	palette = palette_set.get_palette(p_stem)
+	_sync_palettes()
+	_sync_variants()
+	_rebuild()
 
 
 func _ready() -> void:
+	# Palette bar: which palette is being edited. Several coexist and all apply at
+	# once; this only chooses what the rows below show.
+	var palette_bar := HBoxContainer.new()
+	_palette_picker = OptionButton.new()
+	_palette_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_palette_picker.tooltip_text = "Which palette these rows edit.\nEvery palette applies at once; each has its own colors, variants and generated class."
+	_palette_picker.item_selected.connect(_on_palette_selected)
+	palette_bar.add_child(_palette_picker)
+	var add_palette := Button.new()
+	add_palette.icon = get_theme_icon(&"Add", &"EditorIcons")
+	add_palette.tooltip_text = "Create another palette (a separate .tres and generated class)"
+	add_palette.pressed.connect(_ask_palette_name)
+	palette_bar.add_child(add_palette)
+	add_child(palette_bar)
+
 	# Variant bar: which colour set the dock edits and the editor previews.
 	var bar := HBoxContainer.new()
 	_variant_picker = OptionButton.new()
@@ -96,8 +131,53 @@ func _ready() -> void:
 	exp.pressed.connect(func() -> void: _pick_gpl_file(true))
 	io.add_child(exp)
 	add_child(io)
+	_sync_palettes()
 	_sync_variants()
 	_rebuild()
+
+
+# -- palettes --
+
+func _sync_palettes() -> void:
+	if _palette_picker == null or palette_set == null:
+		return
+	_palette_picker.clear()
+	var stems := palette_set.stems()
+	for i in stems.size():
+		_palette_picker.add_item(String(stems[i]).capitalize(), i)
+		if stems[i] == _stem:
+			_palette_picker.select(i)
+	_palette_picker.visible = stems.size() > 1  # one palette needs no picker
+
+
+func _on_palette_selected(p_index: int) -> void:
+	var stems := palette_set.stems()
+	if p_index < stems.size():
+		select_palette(String(stems[p_index]))
+
+
+func _ask_palette_name() -> void:
+	_variant_action = "palette"
+	_ensure_name_dialog()
+	_variant_dialog.title = "New palette (file name)"
+	_variant_field.text = ""
+	_variant_dialog.popup_centered()
+	_variant_field.grab_focus()
+
+
+## Writes a new empty palette resource; the plugin reloads the set and selects it.
+func _create_palette(p_name: String) -> void:
+	var stem := p_name.to_snake_case()
+	if stem.is_empty() or palette_set.palettes.has(stem):
+		push_warning("LivePalette: '%s' is not a usable new palette name" % p_name)
+		return
+	var path := "%s/%s.tres" % [LivePaletteSet.DIR, stem]
+	var created := LivePaletteData.new()
+	if ResourceSaver.save(created, path) != OK:
+		push_error("LivePalette: could not create %s" % path)
+		return
+	EditorInterface.get_resource_filesystem().update_file(path)
+	palette_created.emit(stem)
 
 
 # -- variants --
@@ -122,16 +202,21 @@ func _on_variant_selected(p_index: int) -> void:
 	undo.commit_action()
 
 
+func _ensure_name_dialog() -> void:
+	if _variant_dialog != null:
+		return
+	_variant_dialog = AcceptDialog.new()
+	_variant_field = LineEdit.new()
+	_variant_field.custom_minimum_size = Vector2(240, 0) * EditorInterface.get_editor_scale()
+	_variant_dialog.add_child(_variant_field)
+	_variant_dialog.register_text_enter(_variant_field)
+	_variant_dialog.confirmed.connect(_on_variant_name_confirmed)
+	add_child(_variant_dialog)
+
+
 func _ask_variant_name(p_action: String) -> void:
 	_variant_action = p_action
-	if _variant_dialog == null:
-		_variant_dialog = AcceptDialog.new()
-		_variant_field = LineEdit.new()
-		_variant_field.custom_minimum_size = Vector2(240, 0) * EditorInterface.get_editor_scale()
-		_variant_dialog.add_child(_variant_field)
-		_variant_dialog.register_text_enter(_variant_field)
-		_variant_dialog.confirmed.connect(_on_variant_name_confirmed)
-		add_child(_variant_dialog)
+	_ensure_name_dialog()
 	_variant_dialog.title = "New variant" if p_action == "add" else "Rename variant"
 	_variant_field.text = palette.active_variant if p_action == "rename" else ""
 	_variant_dialog.popup_centered()
@@ -141,7 +226,12 @@ func _ask_variant_name(p_action: String) -> void:
 
 func _on_variant_name_confirmed() -> void:
 	var wanted := _variant_field.text.strip_edges()
-	if wanted.is_empty() or wanted in palette.variants:
+	if wanted.is_empty():
+		return
+	if _variant_action == "palette":
+		_create_palette(wanted)
+		return
+	if wanted in palette.variants:
 		return
 	if _variant_action == "add":
 		undo.create_action("Palette: add variant")
@@ -265,6 +355,12 @@ func _make_row(p_entry: Dictionary) -> HBoxContainer:
 		undo.add_do_method(palette, &"rename_entry", id, edit.text)
 		undo.add_undo_method(palette, &"rename_entry", id, old_name)
 		undo.commit_action()
+		# The name may have been suffixed to keep it unique; show what was stored
+		# rather than what was typed. _sync leaves a focused field alone, and the
+		# field still has focus after Enter.
+		var settled := palette.find_index(id)
+		if settled >= 0:
+			edit.text = str(palette.entries[settled]["name"])
 	edit.text_submitted.connect(func(_t: String) -> void: commit_rename.call())
 	edit.focus_exited.connect(commit_rename)
 	row.add_child(edit)
@@ -476,7 +572,7 @@ func _on_use_activated(p_index: int) -> void:
 
 
 func _on_add_pressed() -> void:
-	var id := palette.new_id()  # pre-generated so redo re-adds the same id
+	var id := palette_set.new_id()  # unique across every palette, not just this one
 	undo.create_action("Palette: add color")
 	undo.add_do_method(palette, &"add_entry", id, "Color %d" % (palette.entries.size() + 1), Color.WHITE, -1)
 	undo.add_undo_method(palette, &"remove_entry", id)

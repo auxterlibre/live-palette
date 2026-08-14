@@ -8,7 +8,8 @@ const CONST_CLASS := "LivePalette"
 const RUNTIME_PATH := "res://addons/live_palette/palette_runtime.gd"
 const AUTOLOAD_NAME := "LivePaletteRuntime"
 
-var palette: LivePaletteData
+var palette: LivePaletteData  # the default palette, kept for convenience
+var palette_set: LivePaletteSet
 var dock
 var inspector
 var _save_timer: Timer
@@ -19,10 +20,9 @@ func _enter_tree() -> void:
 	if not ResourceLoader.exists(PALETTE_PATH):
 		_ensure_data_dir()
 		ResourceSaver.save(LivePaletteData.new(), PALETTE_PATH)
-	palette = load(PALETTE_PATH) as LivePaletteData
-	if palette.migrate():  # pre-1.1 single-color entries become one-variant maps
-		ResourceSaver.save(palette)
-	palette.changed.connect(_on_palette_changed)
+	palette_set = LivePaletteSet.new()
+	_reload_palettes()
+	palette = palette_set.get_palette(LivePaletteSet.DEFAULT_STEM)
 	_save_timer = Timer.new()
 	_save_timer.one_shot = true
 	_save_timer.wait_time = 0.5
@@ -30,11 +30,12 @@ func _enter_tree() -> void:
 	add_child(_save_timer)
 	dock = load("res://addons/live_palette/dock.gd").new()
 	dock.name = "Palette"  # dock tab title
-	dock.setup(palette, get_undo_redo())
+	dock.setup(palette_set, get_undo_redo())
 	dock.generate_requested.connect(_write_const_script)
+	dock.palette_created.connect(_on_palette_created)
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, dock)
 	inspector = load("res://addons/live_palette/inspector_plugin.gd").new()
-	inspector.setup(palette, get_undo_redo())
+	inspector.setup(palette_set, get_undo_redo())
 	add_inspector_plugin(inspector)
 	scene_changed.connect(_on_scene_changed)
 	_apply_all.call_deferred()
@@ -86,20 +87,40 @@ func _disable_plugin() -> void:
 	remove_autoload_singleton(AUTOLOAD_NAME)
 
 
+## Loads every palette in the data folder and listens to each, so a second palette
+## behaves exactly like the first.
+func _reload_palettes() -> void:
+	palette_set.load_all()
+	for stem in palette_set.palettes:
+		var data: LivePaletteData = palette_set.palettes[stem]
+		if data.migrate():  # pre-1.1 single-color entries become one-variant maps
+			ResourceSaver.save(data)
+		if not data.changed.is_connected(_on_palette_changed):
+			data.changed.connect(_on_palette_changed)
+
+
+func _on_palette_created(p_stem: String) -> void:
+	_reload_palettes()
+	palette = palette_set.get_palette(LivePaletteSet.DEFAULT_STEM)
+	dock.setup(palette_set, get_undo_redo())
+	dock.select_palette(p_stem)
+	_write_const_script()
+
+
 func _on_palette_changed() -> void:
 	_apply_all()
 	_save_timer.start()
 
 
 func _on_scene_changed(p_root: Node) -> void:
-	if p_root and palette and palette.apply_to_tree(p_root) > 0:
+	if p_root and palette_set and palette_set.apply_to_tree(p_root) > 0:
 		EditorInterface.mark_scene_as_unsaved()
 
 
 func _apply_all() -> void:
 	var current := EditorInterface.get_edited_scene_root()
 	for root in _open_roots():
-		if palette.apply_to_tree(root) > 0 and root == current:
+		if palette_set.apply_to_tree(root) > 0 and root == current:
 			EditorInterface.mark_scene_as_unsaved()
 
 
@@ -112,7 +133,8 @@ func _open_roots() -> Array:
 
 func _flush_save() -> void:
 	_save_timer.stop()
-	ResourceSaver.save(palette)
+	for stem in palette_set.palettes:
+		ResourceSaver.save(palette_set.palettes[stem])
 	_write_const_script()
 	var obj := EditorInterface.get_inspector().get_edited_object()
 	if obj:
@@ -124,6 +146,8 @@ func _ensure_data_dir() -> void:
 		DirAccess.make_dir_recursive_absolute(DATA_DIR)
 
 
+## One generated file for every palette: the default at the top level, the rest as
+## nested classes, so there is a single class name to keep free.
 func _write_const_script() -> void:
 	if ProjectSettings.has_setting("autoload/" + CONST_CLASS):
 		push_error("LivePalette: an autoload named '%s' already exists, so the generated class can't use that name (Godot: \"hides an autoload singleton\"). Rename that autoload in Project Settings > Autoload, then delete %s to regenerate it." % [CONST_CLASS, CONST_SCRIPT_PATH])
@@ -133,7 +157,8 @@ func _write_const_script() -> void:
 			push_error("LivePalette: can't generate %s — the class name '%s' is already used by %s." % [CONST_SCRIPT_PATH, CONST_CLASS, c["path"]])
 			return
 	_ensure_data_dir()
-	var text: String = palette.build_const_script(CONST_CLASS, PALETTE_PATH)
+	_remove_stale_const_scripts()
+	var text: String = palette_set.build_const_script()
 	var existed := FileAccess.file_exists(CONST_SCRIPT_PATH)
 	if existed and FileAccess.get_file_as_string(CONST_SCRIPT_PATH) == text:
 		return
@@ -146,7 +171,25 @@ func _write_const_script() -> void:
 	var fs := EditorInterface.get_resource_filesystem()
 	fs.update_file(CONST_SCRIPT_PATH)
 	if not existed:
-		fs.scan()
+		fs.scan()  # a new class_name only registers after a rescan
+
+
+## An earlier build wrote one file per palette (ui_const.gd -> class UiPalette).
+## Those keep declaring stale classes, so clear them out — but only files this addon
+## actually generated, identified by the header it writes.
+func _remove_stale_const_scripts() -> void:
+	for file in DirAccess.get_files_at(DATA_DIR):
+		var path := "%s/%s" % [DATA_DIR, file]
+		if not file.ends_with("_const.gd") or path == CONST_SCRIPT_PATH:
+			continue
+		if not FileAccess.get_file_as_string(path).begins_with("# Generated by the Live Palette addon"):
+			continue
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+		var uid_path := path + ".uid"
+		if FileAccess.file_exists(uid_path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(uid_path))
+		EditorInterface.get_resource_filesystem().update_file(path)
+		push_warning("LivePalette: removed %s; every palette is now reached through the single %s class (e.g. %s.UI.PANEL)." % [path, CONST_CLASS, CONST_CLASS])
 
 
 func _save_external_data() -> void:

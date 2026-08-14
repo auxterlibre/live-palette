@@ -29,6 +29,15 @@ at startup.
   if LivePalette.has_color("Sky Blue"): ...
   ```
 
+- Several palettes at once: keep a `palette` for the game world and a `ui` beside it,
+  each with its own colors and variants. They all apply together; the dock's picker
+  only chooses which one you are editing. Everything is reached through one class:
+
+  ```gdscript
+  LivePalette.SAND            # the default palette, res://live_palette/palette.tres
+  LivePalette.UI.ACCENT       # ui.tres
+  LivePalette.UI.color("Accent")
+  ```
 - Variants: one set of named colors, several palettes of values. Add a Dark variant
   beside your Default, switch with the dropdown at the top of the dock, and the editor
   retints as you look at it. At runtime one call does the same to a live game:
@@ -39,6 +48,9 @@ at startup.
   ```
 
   Links are stored by id, so adding variants changes nothing in your saved scenes.
+- Names stay unique inside a palette. Import a `.gpl` holding a name you already use
+  and it arrives as "Panel 2" rather than a second "Panel", so `LivePalette.PANEL`
+  always means one particular colour.
 - You can import and export GIMP `.gpl` files, so a palette from Lospec, Aseprite or
   Krita lands in the dock in one step. The import is a single undoable action.
 - Each row has a search button that lists every saved scene or resource using that
