@@ -340,6 +340,30 @@ func to_gpl(p_palette_name: String) -> String:
 	return "\n".join(lines) + "\n"
 
 
+static func scan_bound_files(p_dir: String, p_extensions: Array, p_out: PackedStringArray) -> void:
+	var d := DirAccess.open(p_dir)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var f := d.get_next()
+	while not f.is_empty():
+		var path := p_dir.path_join(f)
+		if d.current_is_dir():
+			if not f.begins_with("."):
+				scan_bound_files(path, p_extensions, p_out)
+		elif f.get_extension() in p_extensions and FileAccess.get_file_as_string(path).contains(String(META)):
+			p_out.append(path)
+		f = d.get_next()
+
+
+static func owner_file(p_res: Resource) -> String:
+	var path := p_res.resource_path
+	var sep := path.find("::")
+	if sep >= 0:
+		path = path.substr(0, sep)
+	return path if path.begins_with("res://") else ""
+
+
 static func find_uses_in_text(p_text: String, p_id: String) -> int:
 	var needle := "\"%s\"" % p_id
 	var n := 0
@@ -357,18 +381,18 @@ static func hex(p_color: Color) -> String:
 	return "#" + p_color.to_html(p_color.a < 1.0).to_upper()
 
 
-func apply_to_tree(p_root: Node) -> int:
-	return _apply_recursive(p_root, {})
+func apply_to_tree(p_root: Node, p_dirty_files: Dictionary = {}) -> int:
+	return _apply_recursive(p_root, {}, p_dirty_files)
 
 
-func _apply_recursive(p_node: Node, p_visited: Dictionary) -> int:
-	var n := apply_to_object(p_node, p_visited)
+func _apply_recursive(p_node: Node, p_visited: Dictionary, p_dirty_files: Dictionary) -> int:
+	var n := apply_to_object(p_node, p_visited, p_dirty_files)
 	for c in p_node.get_children():
-		n += _apply_recursive(c, p_visited)
+		n += _apply_recursive(c, p_visited, p_dirty_files)
 	return n
 
 
-func apply_to_object(p_obj: Object, p_visited: Dictionary) -> int:
+func apply_to_object(p_obj: Object, p_visited: Dictionary, p_dirty_files: Dictionary = {}) -> int:
 	var iid := p_obj.get_instance_id()
 	if p_visited.has(iid):
 		return 0
@@ -385,9 +409,13 @@ func apply_to_object(p_obj: Object, p_visited: Dictionary) -> int:
 			if cur is Color and not cur.is_equal_approx(c):
 				p_obj.set(prop, c)
 				n += 1
+	if n > 0 and p_obj is Resource:
+		var file := owner_file(p_obj)
+		if not file.is_empty():
+			p_dirty_files[file] = true
 	for p in p_obj.get_property_list():
 		if p["type"] == TYPE_OBJECT and (p["usage"] & PROPERTY_USAGE_STORAGE) and p["name"] != "script":
 			var v: Variant = p_obj.get(p["name"])
 			if v is Resource:
-				n += apply_to_object(v, p_visited)
+				n += apply_to_object(v, p_visited, p_dirty_files)
 	return n

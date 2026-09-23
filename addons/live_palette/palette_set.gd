@@ -40,17 +40,17 @@ func is_empty() -> bool:
 	return palettes.is_empty()
 
 
-func apply_to_tree(p_root: Node) -> int:
+func apply_to_tree(p_root: Node, p_dirty_files: Dictionary = {}) -> int:
 	var changed := 0
 	for stem in palettes:
-		changed += (palettes[stem] as LivePaletteData).apply_to_tree(p_root)
+		changed += (palettes[stem] as LivePaletteData).apply_to_tree(p_root, p_dirty_files)
 	return changed
 
 
-func apply_to_object(p_object: Object, p_visited: Dictionary) -> int:
+func apply_to_object(p_object: Object, p_visited: Dictionary, p_dirty_files: Dictionary = {}) -> int:
 	var changed := 0
 	for stem in palettes:
-		changed += (palettes[stem] as LivePaletteData).apply_to_object(p_object, p_visited.duplicate())
+		changed += (palettes[stem] as LivePaletteData).apply_to_object(p_object, p_visited.duplicate(), p_dirty_files)
 	return changed
 
 

@@ -497,7 +497,12 @@ func _find_uses(p_id: String) -> void:
 	if i < 0:
 		return
 	var hits: Array[Dictionary] = []
-	_scan_dir("res://", p_id, hits)
+	var files := PackedStringArray()
+	LivePaletteData.scan_bound_files("res://", SCAN_EXTENSIONS, files)
+	for path in files:
+		var n := LivePaletteData.find_uses_in_text(FileAccess.get_file_as_string(path), p_id)
+		if n > 0:
+			hits.append({"path": path, "count": n})
 	if _uses_dlg == null:
 		_uses_dlg = AcceptDialog.new()
 		_uses_list = ItemList.new()
@@ -515,24 +520,6 @@ func _find_uses(p_id: String) -> void:
 			_uses_list.add_item("%s  (%d)" % [h["path"], h["count"]])
 			_uses_list.set_item_metadata(_uses_list.item_count - 1, h["path"])
 	_uses_dlg.popup_centered()
-
-
-func _scan_dir(p_dir: String, p_id: String, p_hits: Array[Dictionary]) -> void:
-	var d := DirAccess.open(p_dir)
-	if d == null:
-		return
-	d.list_dir_begin()
-	var f := d.get_next()
-	while not f.is_empty():
-		var path := p_dir.path_join(f)
-		if d.current_is_dir():
-			if not f.begins_with("."):
-				_scan_dir(path, p_id, p_hits)
-		elif f.get_extension() in SCAN_EXTENSIONS:
-			var n := LivePaletteData.find_uses_in_text(FileAccess.get_file_as_string(path), p_id)
-			if n > 0:
-				p_hits.append({"path": path, "count": n})
-		f = d.get_next()
 
 
 func _on_use_activated(p_index: int) -> void:

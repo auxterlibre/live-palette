@@ -13,6 +13,10 @@ var palette_set: LivePaletteSet
 var dock
 var inspector
 var _save_timer: Timer
+var _bound_files := PackedStringArray()
+var _bound_files_stale := true
+var _bound_pass_pending := false
+var _dirty_files := {}
 
 
 func _enter_tree() -> void:
@@ -38,11 +42,13 @@ func _enter_tree() -> void:
 	inspector.setup(palette_set, get_undo_redo())
 	add_inspector_plugin(inspector)
 	scene_changed.connect(_on_scene_changed)
+	EditorInterface.get_resource_filesystem().filesystem_changed.connect(_on_filesystem_changed)
 	_apply_all.call_deferred()
 	_write_const_script.call_deferred()
 
 
 func _exit_tree() -> void:
+	EditorInterface.get_resource_filesystem().filesystem_changed.disconnect(_on_filesystem_changed)
 	remove_inspector_plugin(inspector)
 	remove_control_from_docks(dock)
 	dock.free()
@@ -104,19 +110,34 @@ func _on_palette_created(p_stem: String) -> void:
 
 func _on_palette_changed() -> void:
 	_apply_all()
+	_bound_pass_pending = true
 	_save_timer.start()
 
 
 func _on_scene_changed(p_root: Node) -> void:
-	if p_root and palette_set and palette_set.apply_to_tree(p_root) > 0:
+	if p_root and palette_set and palette_set.apply_to_tree(p_root, _dirty_files) > 0:
 		EditorInterface.mark_scene_as_unsaved()
+	_queue_dirty_save()
+
+
+func _on_filesystem_changed() -> void:
+	_bound_files_stale = true
 
 
 func _apply_all() -> void:
 	var current := EditorInterface.get_edited_scene_root()
 	for root in _open_roots():
-		if palette_set.apply_to_tree(root) > 0 and root == current:
+		if palette_set.apply_to_tree(root, _dirty_files) > 0 and root == current:
 			EditorInterface.mark_scene_as_unsaved()
+	var obj := EditorInterface.get_inspector().get_edited_object()
+	if obj != null and not obj is LivePaletteData:
+		palette_set.apply_to_object(obj, {}, _dirty_files)
+	_queue_dirty_save()
+
+
+func _queue_dirty_save() -> void:
+	if not _dirty_files.is_empty() and _save_timer.is_stopped():
+		_save_timer.start()
 
 
 func _open_roots() -> Array:
@@ -131,9 +152,55 @@ func _flush_save() -> void:
 	for stem in palette_set.palettes:
 		ResourceSaver.save(palette_set.palettes[stem])
 	_write_const_script()
+	_save_bound_files()
 	var obj := EditorInterface.get_inspector().get_edited_object()
 	if obj:
 		obj.notify_property_list_changed()
+
+
+func _save_bound_files() -> void:
+	var held := {}
+	if _bound_pass_pending:
+		_bound_pass_pending = false
+		_refresh_bound_files()
+		for path in _bound_files:
+			var res: Resource = load(path)
+			if res != null:
+				held[path] = res
+				palette_set.apply_to_object(res, {}, _dirty_files)
+	if _dirty_files.is_empty():
+		return
+	var fs := EditorInterface.get_resource_filesystem()
+	for path in _dirty_files:
+		if not _is_bound_file_writable(path):
+			continue
+		var res: Resource = held[path] if held.has(path) else load(path)
+		if res == null:
+			continue
+		var err := ResourceSaver.save(res, path)
+		if err != OK:
+			push_warning("LivePalette: could not rewrite %s with its palette colors (%s)" % [path, error_string(err)])
+			continue
+		fs.update_file(path)
+	_dirty_files.clear()
+
+
+func _refresh_bound_files() -> void:
+	if not _bound_files_stale:
+		return
+	_bound_files_stale = false
+	_bound_files.clear()
+	var found := PackedStringArray()
+	LivePaletteData.scan_bound_files("res://", ["tres"], found)
+	for path in found:
+		if _is_bound_file_writable(path):
+			_bound_files.append(path)
+
+
+func _is_bound_file_writable(p_path: String) -> bool:
+	if p_path.get_extension() != "tres":
+		return false
+	return not p_path.begins_with("res://addons/") and not p_path.begins_with(LivePaletteSet.DIR + "/")
 
 
 func _ensure_data_dir() -> void:

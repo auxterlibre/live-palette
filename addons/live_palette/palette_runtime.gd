@@ -18,6 +18,10 @@ func _on_node_added(p_node: Node) -> void:
 	_set.apply_to_object(p_node, {})
 
 
+func apply(p_object: Object) -> int:
+	return _set.apply_to_object(p_object, {})
+
+
 func palettes() -> Dictionary:
 	return _set.palettes
 

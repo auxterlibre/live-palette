@@ -2,8 +2,8 @@
 
 A named color palette for Godot 4. Pick palette colors anywhere in the Inspector, and
 when you change one later, everything that used it follows. Open scenes update as you
-edit, scenes you open afterwards correct themselves, and the running game fixes itself
-at startup.
+edit, scenes you open afterwards correct themselves, resources saved as their own files
+are rewritten on disk, and the running game fixes itself at startup.
 
 ![The Palette dock, tabbed next to the Inspector](https://raw.githubusercontent.com/auxterlibre/live-palette/main/addons/live_palette/screenshot_01.png)
 
@@ -19,7 +19,9 @@ at startup.
   built-in color picker stays where it was.
 - Each link stores a stable id rather than a name, so renaming an entry doesn't break it.
 - A small autoload re-applies the palette when the game starts, so a scene saved with
-  old colors still runs with the right ones.
+  old colors still runs with the right ones. It reaches every node and the resources
+  their properties point at; a resource your code loads on its own goes through
+  `LivePaletteRuntime.apply(res)`.
 - The addon writes a constants file to `res://live_palette/palette_const.gd` and keeps
   it current:
 
@@ -77,8 +79,11 @@ Enabling it registers the `LivePaletteRuntime` autoload and creates
 Picking a palette color writes `{property: entry_id}` into the object's
 `_live_palette_bindings` metadata. That metadata is hidden in the Inspector and saved
 with the scene or resource. In the editor, the plugin re-applies bindings to open scenes
-whenever the palette changes, and to other scenes as you open them. At runtime the
-`LivePaletteRuntime` autoload does one pass at startup, then watches `node_added`. Ids
+whenever the palette changes, and to other scenes as you open them. A `.tres` saved on
+its own is applied and rewritten on disk shortly after a palette change, so it holds the
+current colors before the game or another scene loads it. At runtime the
+`LivePaletteRuntime` autoload does one pass over the tree at startup, then watches
+`node_added`; both cover nodes and the resources reachable from their properties. Ids
 never change, so renames are free.
 
 ## Notes and limitations
@@ -87,6 +92,14 @@ never change, so renames are free.
   change the palette while the game runs, read live values with
   `LivePaletteRuntime.color()` instead. The constants come from the first variant, so
   they stay put when you switch the active one; `LivePalette.color_in()` reads the rest.
+- The autoload applies bindings to nodes and to the resources their properties point
+  at. A bound resource that only your code loads (`load()`, `preload()`) is not on that
+  path: call `LivePaletteRuntime.apply(res)` after loading it, and again if the palette
+  or variant changes while the game runs. The editor rewrites such files after a palette
+  change, so a fresh load already holds the current colors.
+- The editor's rewrite covers `.tres` files outside `res://addons/` that carry palette
+  bindings, and only those whose bound colors differ. Open scenes are handled as you
+  edit them, and closed scenes correct themselves when opened.
 - `.gpl` export writes the variant you are looking at, and import fills it.
 - Colors inside `Array` or `Dictionary` properties of resources are not walked. Direct
   resource properties are.
